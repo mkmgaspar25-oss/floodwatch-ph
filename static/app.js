@@ -3,6 +3,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COL = {low:'#22a559', moderate:'#e6b800', high:'#f08a24', severe:'#d92d2d', none:'#7b8794'};
 const WX = {0:'Clear',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Rime fog',51:'Light drizzle',53:'Drizzle',55:'Dense drizzle',
   61:'Light rain',63:'Moderate rain',65:'Heavy rain',66:'Freezing rain',67:'Freezing rain',80:'Light showers',81:'Showers',82:'Violent showers',95:'Thunderstorm',96:'Thunderstorm, hail',99:'Thunderstorm, heavy hail'};
+const wxi = c => c === 0 ? '☀️' : c === 1 ? '🌤️' : c === 2 ? '⛅' : c === 3 ? '☁️' : (c === 45 || c === 48) ? '🌫️' : c >= 95 ? '⛈️' : (c >= 51 && c <= 57) || c === 80 || c === 81 ? '🌦️' : c >= 61 ? '🌧️' : '🌥️';
 const SEVN = ['low','moderate','high','severe'];
 const S = {loc:{name:'Manila', lat:14.5995, lon:120.9842}, mode:'select', o:null, d:null, rpt:null, alerts:[], prefs:JSON.parse(localStorage.fwPrefs||'{"minSev":0,"mon":null}'), charts:{}};
 const fmt = (iso, o={}) => iso ? new Date(iso).toLocaleString('en-PH', {timeZone:'Asia/Manila', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', ...o}) : '—';
@@ -44,18 +45,35 @@ async function loadRadar() {
 const RS = {Unverified:'#8a94a0','Under Review':'#4c9bff', Verified:'#d92d2d', Resolved:'#22a559'};
 async function loadAreas() {
   try {
-    const rows = await api('/api/flood-areas?with_risk=true'); G.areas.clearLayers();
+    const rows = await api('/api/flood-areas?with_risk=true'); G.areas.clearLayers(); S.areaById = Object.fromEntries(rows.map(a => [a.id, a]));
     rows.forEach(a => {
       const c = COL[key(a.risk.level)];
       const m = L.marker([a.lat, a.lon], {icon:L.divIcon({className:'', html:`<div class="pin-area" style="background:${c}"></div>`, iconSize:[18,18]}), title:a.name});
       m.bindPopup(() => `<b>${esc(a.name)}</b><br>${esc(a.city)}<br><small>Historical flood-prone location — not necessarily flooded now.</small><br>
         Frequency/severity: ${esc(a.frequency || 'unknown')}<br>Causes: ${esc(a.causes || 'unknown')}<br>Last reported event: ${esc(a.last_event || 'not recorded')}<br>
         Source: ${esc(a.source)}<br>Verification: ${esc(a.verification)} (${esc(a.verified_on || 'never verified')})<hr>
-        Current estimate: ${pill(a.risk.level)}<br><small>${(a.risk.factors||[]).map(esc).join('<br>')}</small><br><button class="btn sm" onclick="pickLoc(${a.lat},${a.lon},'${esc(a.name).replace(/'/g,'')}')">Select</button>`);
+        Current estimate: ${pill(a.risk.level)}<br><small>${(a.risk.factors||[]).map(esc).join('<br>')}</small><br><button class="btn sm" onclick="pickLoc(${a.lat},${a.lon},'${esc(a.name).replace(/'/g,'')}')">Select</button>${sessionStorage.adm ? ` <button class="btn sm alt" onclick="editArea(${a.id})">Edit (admin)</button>` : ''}`);
       G.areas.addLayer(m);
     });
   } catch (e) { toast('Flood-prone areas failed to load: ' + e.message, 'moderate'); }
 }
+window.editArea = id => { const a = S.areaById[id]; if (!a) return; map.closePopup(); showTab('settings'); $('#admBox').hidden = false;
+  $('#arId').value = a.id; $('#arName').value = a.name; $('#arCity').value = a.city || ''; $('#arFreq').value = a.frequency || ''; $('#arCauses').value = a.causes || '';
+  $('#arLast').value = a.last_event || ''; $('#arSrc').value = a.source || ''; $('#arVer').value = a.verification === 'Verified' ? 'Verified' : 'Unverified starter data'; $('#arVerOn').value = a.verified_on || '';
+  $('#arMove').checked = false; $('#arName').scrollIntoView({behavior:'smooth'}); };
+const clearArea = () => { $('#areaForm').reset(); $('#arId').value = ''; $('#arMove').checked = true; };
+$('#arClr').onclick = clearArea;
+$('#areaForm').onsubmit = async e => {
+  e.preventDefault(); const id = $('#arId').value, old = id ? S.areaById[id] : null, move = !old || $('#arMove').checked;
+  const body = {name:$('#arName').value, city:$('#arCity').value || null, lat:move ? S.loc.lat : old.lat, lon:move ? S.loc.lon : old.lon, frequency:$('#arFreq').value || null,
+    causes:$('#arCauses').value || null, last_event:$('#arLast').value || null, source:$('#arSrc').value || null, verification:$('#arVer').value, verified_on:$('#arVerOn').value || null};
+  try { await api('/api/admin/areas' + (id ? '/' + id : ''), {method:id ? 'PUT' : 'POST', headers:{'Content-Type':'application/json', 'X-Admin-Token':sessionStorage.adm}, body:JSON.stringify(body)});
+    toast(id ? 'Area updated.' : 'Area added.', 'low'); clearArea(); loadAreas(); }
+  catch (err) { toast('Could not save area: ' + err.message, 'severe'); }
+};
+$('#arDel').onclick = async () => { const id = $('#arId').value; if (!id) return toast('Load an area with "Edit (admin)" first.', 'moderate'); if (!confirm('Delete this flood-prone area?')) return;
+  try { await api('/api/admin/areas/' + id, {method:'DELETE', headers:{'X-Admin-Token':sessionStorage.adm}}); toast('Area deleted.', 'low'); clearArea(); loadAreas(); }
+  catch (err) { toast('Could not delete: ' + err.message, 'severe'); } };
 async function loadReports() {
   try {
     const rows = await api('/api/reports?limit=100'); G.reports.clearLayers(); G.closures.clearLayers(); S.reports = rows;
@@ -99,15 +117,15 @@ $('#svBtn').onclick = () => { const n = $('#svName').value.trim(); if (!n) retur
   const l = places(); l.push({name:n, lat:S.loc.lat, lon:S.loc.lon, note:'saved'}); localStorage.fwPlaces = JSON.stringify(l); $('#svName').value = ''; renderSaved(); toast(`Saved "${n}" at the currently selected location.`, 'low'); };
 $('#svList').onclick = e => { const i = e.target.dataset.rm; if (i == null) return; const l = places(); l.splice(+i, 1); localStorage.fwPlaces = JSON.stringify(l); renderSaved(); };
 renderSaved();
-function placeSearch(inId, resId, onPick) {
+function placeSearch(inId, resId, onPick, btnId) {
   let t; const inp = $(inId), box = $(resId);
   const run = async address => {
     const q = inp.value.trim(); if (q.length < 2) { box.style.display = 'none'; return; }
     box.innerHTML = '<div style="padding:8px">Searching…</div>'; box.style.display = 'block';
     try {
       const saved = places().filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
-      const rs = [...saved, ...await api('/api/geocode?q=' + encodeURIComponent(q) + (address ? '&address=true' : ''))];
-      const hint = address ? '' : '<div class="muted" style="padding:6px 10px">Street address? Press Enter to search addresses.</div>';
+      const rs = [...saved, ...await api('/api/geocode?q=' + encodeURIComponent(q) + (address ? '&address=true' : `&lat=${S.loc.lat}&lon=${S.loc.lon}`))];
+      const hint = address ? '' : '<div class="muted" style="padding:6px 10px">Landmark or street address? Press Enter or 🔎 to search.</div>';
       box.innerHTML = (rs.map((r, i) => `<button type="button" data-i="${i}">${r.note === 'saved' ? '⭐ ' : ''}${esc(r.name)}${r.region ? ', ' + esc(r.region) : ''}${r.note && r.note !== 'saved' ? `<br><small class="muted">${esc(r.note)}</small>` : ''}</button>`).join('')
         || `<div style="padding:8px">No matches.${address ? ' Try street + city only (no house number), or use Pick on map.' : ''}</div>`) + hint;
       box.onclick = ev => { const b = ev.target.closest('button'); if (!b) return; const r = rs[+b.dataset.i]; box.style.display = 'none';
@@ -115,10 +133,11 @@ function placeSearch(inId, resId, onPick) {
     } catch (e) { box.innerHTML = `<div style="padding:8px">${esc(e.message)}</div>`; }
   };
   inp.oninput = () => { clearTimeout(t); t = setTimeout(() => run(false), 350); };
+  if (btnId) $(btnId).onclick = () => { clearTimeout(t); run(true); };
   inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); run(true); } };
 }
-placeSearch('#oIn', '#oRes', (ll, n) => { S.o = ll; S.oName = n; });
-placeSearch('#dIn', '#dRes', (ll, n) => { S.d = ll; S.dName = n; });
+placeSearch('#oIn', '#oRes', (ll, n) => { S.o = ll; S.oName = n; }, '#goO');
+placeSearch('#dIn', '#dRes', (ll, n) => { S.d = ll; S.dName = n; }, '#goD');
 $('#useO').onclick = () => { S.o = [S.loc.lat, S.loc.lon]; S.oName = S.loc.name; $('#oIn').value = S.loc.name; };
 $('#useD').onclick = () => { S.d = [S.loc.lat, S.loc.lon]; S.dName = S.loc.name; $('#dIn').value = S.loc.name; };
 $('#pickO').onclick = () => setMode('origin'); $('#pickD').onclick = () => setMode('dest'); $('#pickR').onclick = () => setMode('report');
@@ -134,10 +153,10 @@ async function loadWeather() {
     const w = await api(`/api/weather?lat=${lat}&lon=${lon}`), c = w.current, rw = w.rain_window;
     const cat = c.precip >= 30 ? 'Torrential' : c.precip >= 15 ? 'Intense' : c.precip >= 7.5 ? 'Heavy' : c.precip >= 2.5 ? 'Moderate' : c.precip >= .1 ? 'Light' : 'None';
     const dirs = ['N','NE','E','SE','S','SW','W','NW'], dir = dirs[Math.round(c.wind_dir / 45) % 8];
-    const offs = S.alerts.filter(a => a.kind === 'official' && a.active).length;
-    const cards = [['Temperature', `${c.temp}°C`, `Feels like ${c.feels}°C`], ['Condition', WX[c.code] || `Code ${c.code}`, 'Model value'], ['Chance of rain (this hour)', c.prob == null ? 'N/A' : c.prob + '%', 'Forecast provider'],
-      ['Rain intensity now', `${c.precip} mm/h`, cat === 'None' ? 'No rain' : cat], ['Humidity', c.humidity + '%', ''], ['Wind', `${c.wind} km/h ${dir}`, ''], ['Visibility', c.visibility == null ? 'N/A' : (c.visibility / 1000).toFixed(1) + ' km', ''],
-      ['Official warnings', offs ? offs + ' active' : 'None entered', offs ? 'See alert center' : 'Check PAGASA directly']];
+    const offs = S.alerts.filter(a => a.kind === 'official' && a.active).length + (S.pagasa?.thunderstorm && !S.pagasa.thunderstorm.possibly_expired ? 1 : 0);
+    const cards = [['🌡️ Temperature', `${c.temp}°C`, `Feels like ${c.feels}°C`], ['Condition', `${wxi(c.code)} ${WX[c.code] || 'Code ' + c.code}`, 'Model value'], ['☔ Chance of rain (this hour)', c.prob == null ? 'N/A' : c.prob + '%', 'Forecast provider'],
+      ['🌧️ Rain intensity now', `${c.precip} mm/h`, cat === 'None' ? 'No rain' : cat], ['💧 Humidity', c.humidity + '%', ''], ['💨 Wind', `${c.wind} km/h ${dir}`, ''], ['👁️ Visibility', c.visibility == null ? 'N/A' : (c.visibility / 1000).toFixed(1) + ' km', ''],
+      ['🚨 Official warnings', offs ? offs + ' active' : 'None entered', offs ? 'See alert center' : 'Check PAGASA directly']];
     $('#cards').innerHTML = cards.map(([a,b,c2]) => `<div class="card"><small>${a}</small><b>${esc(b)}</b><small>${esc(c2)}</small></div>`).join('');
     $('#updated').textContent = `Model time ${fmt(w.model_time)} · fetched ${fmt(w.fetched_at)}`;
     $('#stale').classList.toggle('on', w.stale); $('#stale').textContent = w.stale ? 'Provider unreachable — showing cached data fetched ' + fmt(w.fetched_at) : '';
@@ -146,7 +165,11 @@ async function loadWeather() {
     draw('chRain', {data:{labels:lab, datasets:[{type:'bar', label:'Precipitation (mm/h, forecast)', data:h.map(x => x.precip), backgroundColor:'#4c9bff', yAxisID:'y'}, {type:'line', label:'Rain probability (%)', data:h.map(x => x.prob), borderColor:'#f08a24', yAxisID:'y1', pointRadius:0}]},
       options:{scales:{y:{title:{display:true,text:'mm/h'}}, y1:{position:'right', min:0, max:100, grid:{drawOnChartArea:false}}}}});
     draw('chTemp', {type:'line', data:{labels:lab, datasets:[{label:'Temperature (°C)', data:h.map(x => x.temp), borderColor:'#d92d2d', pointRadius:0, yAxisID:'y'}, {label:'Wind (km/h)', data:h.map(x => x.wind), borderColor:'#1d6fe0', pointRadius:0, yAxisID:'y1'}]}, options:{scales:{y1:{position:'right', grid:{drawOnChartArea:false}}}}});
-    $('#daily').innerHTML = w.daily.slice(1, 8).map(d => `<div class="card"><b style="font-size:14px">${fmt(d.date + 'T12:00:00+08:00', {hour:undefined, minute:undefined, weekday:'short'})}</b><br>${esc(WX[d.code] || '')}<br>${d.tmin}–${d.tmax}°C<br>Rain ${d.precip_sum} mm<br>Prob ≤${d.prob_max ?? 'N/A'}%</div>`).join('');
+    $('#daily').innerHTML = w.daily.slice(1, 8).map((d, i) => { const mm = d.precip_sum ?? 0, lv = mm < 1 ? 0 : mm < 10 ? 1 : mm < 30 ? 2 : 3;
+      return `<div class="dcard r${lv}"><div class="dd">${i === 0 ? 'Today' : fmt(d.date + 'T12:00:00+08:00', {hour:undefined, minute:undefined, month:undefined, day:undefined, weekday:'short'})}</div>
+      <div class="di" title="${esc(WX[d.code] || '')}">${wxi(d.code)}</div><div class="dt"><b style="color:#e5533d">${Math.round(d.tmax)}°</b> / <b style="color:#3d8be5">${Math.round(d.tmin)}°</b></div>
+      <div class="dw">${mm} mm</div><div class="bar" title="Max rain probability"><i style="width:${d.prob_max ?? 0}%"></i></div>
+      <small>💧 ${d.prob_max ?? 'N/A'}% · 💨 ${Math.round(d.wind_max)} km/h</small></div>`; }).join('');
   } catch (e) {
     $('#cards').innerHTML = `<div class="card" style="grid-column:1/-1"><b>Weather data unavailable</b><small>${esc(e.message)}. No readings are shown rather than guessed values.</small> <button class="btn sm" onclick="loadWeather()">Retry</button></div>`;
   }
@@ -181,10 +204,21 @@ async function loadHistory() {
 }
 $('#days').onchange = loadHistory;
 
-placeSearch('#search', '#results', (ll, n) => { $('#search').value = ''; selectLocation({name:n.split(',').slice(0, 2).join(','), lat:ll[0], lon:ll[1]}); });
+placeSearch('#search', '#results', (ll, n) => { $('#search').value = ''; selectLocation({name:n.split(',').slice(0, 2).join(','), lat:ll[0], lon:ll[1]}); }, '#searchGo');
 
 // ---------- alerts ----------
+async function loadPagasa() {
+  try { S.pagasa = await api('/api/pagasa'); } catch (e) { S.pagasa = {error:e.message}; }
+  const g = S.pagasa, rain = g.rainfall?.status === 'none' ? 'No Heavy Rainfall Warning is issued (per PAGASA\'s page).' : 'Could not confirm rainfall warning status automatically. Check PAGASA directly.';
+  const ts = g.thunderstorm;
+  S.pagasaHtml = g.error ? `<div class="alert"><b>PAGASA live status unavailable</b><br>${esc(g.error)}</div>` :
+    `<div class="alert ${ts && !ts.possibly_expired ? 'moderate' : 'low'}"><b>🚨 PAGASA live status — ${esc(g.region)}</b><br><span class="muted">Copied from PAGASA's public page, fetched ${fmt(g.fetched_at)}${g.stale ? ' (STALE: PAGASA unreachable)' : ''}. Not generated by FloodWatch.</span>
+    <p><b>Rainfall:</b> ${esc(rain)}</p>
+    <p><b>Thunderstorm:</b> ${ts ? `${esc(ts.title)}${ts.possibly_expired ? ' — <b>issued ' + (ts.age_minutes == null ? 'at an unknown time' : Math.round(ts.age_minutes / 60) + ' h ago') + ', may no longer be in effect</b>' : ''}<br>${esc(ts.text)}` : 'No thunderstorm advisory text found. This may mean none is in effect, or that the page layout changed. Check PAGASA directly.'}</p>
+    <a href="${esc(g.source_url)}" target="_blank" rel="noopener">Open PAGASA's page</a> · <a href="https://www.pagasa.dost.gov.ph/tropical-cyclone/severe-weather-bulletin" target="_blank" rel="noopener">Tropical cyclone bulletin</a></div>`;
+}
 async function loadAlerts(initial) {
+  await loadPagasa();
   try {
     S.alerts = await api('/api/alerts');
     const mon = S.prefs.mon, vis = S.alerts.filter(a => a.kind === 'official' || !mon || mon.includes(a.location_key));
@@ -194,8 +228,8 @@ async function loadAlerts(initial) {
       Area: ${esc(a.area)}${a.starts_at ? `<br>Expected: ${fmt(a.starts_at)}${a.ends_at ? ' – ' + fmt(a.ends_at) : ''}` : ''}${a.probability != null ? `<br>Rain probability: ${a.probability}%` : ''}
       <br>Source: ${esc(a.source)}<br>Issued ${fmt(a.issued_at)} · ${a.active ? 'expires' : 'expired'} ${fmt(a.expires_at)}<br>${esc(a.recommendation || '')}${a.url ? `<br><a href="${esc(a.url)}" target="_blank" rel="noopener">Official advisory</a>` : ''}</div>`;
     const part = (t, l) => l.length ? `<h4>${t}</h4>${l.map(card).join('')}` : '';
-    $('#t-alerts').innerHTML = (part('Official government warnings', act.filter(a => a.kind === 'official')) + part('Active alerts', act.filter(a => a.kind !== 'official')) + part('Recently expired (24 h)', vis.filter(a => !a.active)))
-      || '<p class="muted">No alerts. This does not guarantee no flood risk — check official sources.</p>';
+    $('#t-alerts').innerHTML = S.pagasaHtml + ((part('Official government warnings', act.filter(a => a.kind === 'official')) + part('Active alerts', act.filter(a => a.kind !== 'official')) + part('Recently expired (24 h)', vis.filter(a => !a.active)))
+      || '<p class="muted">No other alerts. This does not guarantee no flood risk — check official sources.</p>');
     const seen = new Set(JSON.parse(localStorage.fwSeen || '[]'));
     act.filter(a => !seen.has(a.id) && SEVN.indexOf(a.severity) >= +S.prefs.minSev).forEach(a => {
       if (!initial) { toast(`${a.title} — ${a.area}`, a.severity); if (Notification?.permission === 'granted') new Notification('FloodWatch PH: ' + a.title, {body:a.area + ' · ' + (a.recommendation || '')}); }
@@ -242,11 +276,23 @@ api('/api/monitored').then(m => { $('#monList').innerHTML = m.map(x => `<label><
   $('#monList').onchange = () => { S.prefs.mon = [...document.querySelectorAll('#monList input:checked')].map(i => i.value); savePrefs(); loadAlerts(true); }; }).catch(() => {});
 $('#push').onclick = async () => { if (!('Notification' in window)) { $('#pushMsg').textContent = 'Not supported in this browser.'; return; } const p = await Notification.requestPermission(); $('#pushMsg').textContent = p === 'granted' ? 'Enabled while this page is open.' : 'Permission not granted.'; };
 $('#geo').onclick = () => navigator.geolocation?.getCurrentPosition(p => { pickLoc(p.coords.latitude, p.coords.longitude, 'My location'); L.circleMarker([p.coords.latitude, p.coords.longitude], {radius:6, color:'#22a559'}).addTo(G.sel); }, () => toast('Location permission denied — search or click the map instead.', 'moderate'));
-$('#admTok').value = sessionStorage.adm || ''; $('#admTok').oninput = e => { sessionStorage.adm = e.target.value; renderReportList(); };
+$('#admTok').value = sessionStorage.adm || ''; $('#admTok').oninput = e => { sessionStorage.adm = e.target.value; $('#admBox').hidden = !e.target.value; renderReportList(); };
+$('#admBox').hidden = !sessionStorage.adm;
+const nowLocal = off => new Date(Date.now() + 8 * 3600e3 + off * 3600e3).toISOString().slice(0, 16);   // Manila time for datetime-local
+$('#avIssued').value = nowLocal(0); $('#avExpires').value = nowLocal(6);
+$('#advForm').onsubmit = async e => {
+  e.preventDefault(); const iso = v => v + ':00+08:00';
+  const body = {title:$('#avTitle').value, area:$('#avArea').value, severity:$('#avSev').value, source:$('#avSrc').value, url:$('#avUrl').value, issued_at:iso($('#avIssued').value), expires_at:iso($('#avExpires').value), recommendation:$('#avRec').value || null};
+  if ($('#avGeo').checked) { body.lat = S.loc.lat; body.lon = S.loc.lon; body.radius_km = +$('#avRad').value; }
+  try { await api('/api/admin/advisories', {method:'POST', headers:{'Content-Type':'application/json', 'X-Admin-Token':sessionStorage.adm}, body:JSON.stringify(body)});
+    toast('Official advisory published.', 'low'); await loadAlerts(true); drawWarnings(); loadRisk(); loadWeather(); }
+  catch (err) { toast('Could not publish: ' + err.message, 'severe'); }
+};
 const net = () => $('#offline').classList.toggle('on', !navigator.onLine); addEventListener('online', net); addEventListener('offline', net); net();
 
 // ---------- boot ----------
 function drawWarnings() { G.warnings.clearLayers(); S.alerts.filter(a => a.kind === 'official' && a.active && a.lat != null && a.radius_km).forEach(a => L.circle([a.lat, a.lon], {radius:a.radius_km * 1000, color:COL[a.severity], fillOpacity:.12}).bindPopup(`<b>${esc(a.title)}</b><br>${esc(a.source)}`).addTo(G.warnings)); }
 (async () => { await loadAlerts(true); drawWarnings(); selectLocation(S.loc); loadAreas(); loadReports(); })();
-setInterval(() => { loadWeather(); loadRisk(); loadReports(); }, 10 * 60e3);
-setInterval(async () => { await loadAlerts(false); drawWarnings(); }, 5 * 60e3);
+setInterval(() => { if (!document.hidden) { loadWeather(); loadRisk(); } }, 10 * 60e3);
+setInterval(() => { if (!document.hidden) loadReports(); }, 60e3);
+setInterval(async () => { if (!document.hidden) { await loadAlerts(false); drawWarnings(); } }, 60e3);
