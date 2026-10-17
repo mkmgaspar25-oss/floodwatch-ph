@@ -90,15 +90,32 @@ map.on('click', e => {
   setMode('select');
 });
 function setMode(m) { S.mode = m; $('#mapmode').textContent = {select:'Click the map to select a location.', origin:'Click the map to set the route origin…', dest:'Click the map to set the destination…', report:'Click the map where flooding is seen…'}[m]; }
-// place-name search for route endpoints (reuses the debounced geocoder)
+// place + street-address search: names are suggested while typing; press Enter to search street addresses
+const places = () => JSON.parse(localStorage.fwPlaces || '[]');
+function renderSaved() {
+  $('#svList').innerHTML = places().map((p, i) => `⭐ ${esc(p.name)} <button class="btn sm alt" data-rm="${i}" aria-label="Remove ${esc(p.name)}">✕</button>`).join('<br>') || 'None yet. Select a point on the map, name it, and save. It will then appear in every search box.';
+}
+$('#svBtn').onclick = () => { const n = $('#svName').value.trim(); if (!n) return toast('Type a name first (e.g. Home).', 'moderate');
+  const l = places(); l.push({name:n, lat:S.loc.lat, lon:S.loc.lon, note:'saved'}); localStorage.fwPlaces = JSON.stringify(l); $('#svName').value = ''; renderSaved(); toast(`Saved "${n}" at the currently selected location.`, 'low'); };
+$('#svList').onclick = e => { const i = e.target.dataset.rm; if (i == null) return; const l = places(); l.splice(+i, 1); localStorage.fwPlaces = JSON.stringify(l); renderSaved(); };
+renderSaved();
 function placeSearch(inId, resId, onPick) {
   let t; const inp = $(inId), box = $(resId);
-  inp.oninput = () => { clearTimeout(t); const q = inp.value.trim(); if (q.length < 2) { box.style.display = 'none'; return; }
-    t = setTimeout(async () => { try { const rs = await api('/api/geocode?q=' + encodeURIComponent(q));
-      box.innerHTML = rs.map((r, i) => `<button type="button" data-i="${i}">${esc(r.name)}${r.region ? ', ' + esc(r.region) : ''}</button>`).join('') || '<div style="padding:8px">No matches</div>';
-      box.style.display = 'block';
-      box.onclick = ev => { const i = ev.target.dataset.i; if (i == null) return; box.style.display = 'none'; inp.value = rs[i].name + (rs[i].region ? ', ' + rs[i].region : ''); onPick([rs[i].lat, rs[i].lon], inp.value); };
-    } catch (e) { box.innerHTML = `<div style="padding:8px">${esc(e.message)}</div>`; box.style.display = 'block'; } }, 350); };
+  const run = async address => {
+    const q = inp.value.trim(); if (q.length < 2) { box.style.display = 'none'; return; }
+    box.innerHTML = '<div style="padding:8px">Searching…</div>'; box.style.display = 'block';
+    try {
+      const saved = places().filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+      const rs = [...saved, ...await api('/api/geocode?q=' + encodeURIComponent(q) + (address ? '&address=true' : ''))];
+      const hint = address ? '' : '<div class="muted" style="padding:6px 10px">Street address? Press Enter to search addresses.</div>';
+      box.innerHTML = (rs.map((r, i) => `<button type="button" data-i="${i}">${r.note === 'saved' ? '⭐ ' : ''}${esc(r.name)}${r.region ? ', ' + esc(r.region) : ''}${r.note && r.note !== 'saved' ? `<br><small class="muted">${esc(r.note)}</small>` : ''}</button>`).join('')
+        || `<div style="padding:8px">No matches.${address ? ' Try street + city only (no house number), or use Pick on map.' : ''}</div>`) + hint;
+      box.onclick = ev => { const b = ev.target.closest('button'); if (!b) return; const r = rs[+b.dataset.i]; box.style.display = 'none';
+        inp.value = r.name + (r.region ? ', ' + r.region : ''); onPick([r.lat, r.lon], inp.value); };
+    } catch (e) { box.innerHTML = `<div style="padding:8px">${esc(e.message)}</div>`; }
+  };
+  inp.oninput = () => { clearTimeout(t); t = setTimeout(() => run(false), 350); };
+  inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); run(true); } };
 }
 placeSearch('#oIn', '#oRes', (ll, n) => { S.o = ll; S.oName = n; });
 placeSearch('#dIn', '#dRes', (ll, n) => { S.d = ll; S.dName = n; });
@@ -164,16 +181,7 @@ async function loadHistory() {
 }
 $('#days').onchange = loadHistory;
 
-// ---------- search (debounced) ----------
-let st; $('#search').oninput = e => {
-  clearTimeout(st); const q = e.target.value.trim(); if (q.length < 2) { $('#results').style.display = 'none'; return; }
-  st = setTimeout(async () => {
-    try { const rs = await api('/api/geocode?q=' + encodeURIComponent(q)); const box = $('#results');
-      box.innerHTML = rs.map((r, i) => `<button data-i="${i}">${esc(r.name)}${r.region ? ', ' + esc(r.region) : ''}</button>`).join('') || '<div style="padding:8px">No matches</div>';
-      box.style.display = 'block'; box.onclick = ev => { const i = ev.target.dataset.i; if (i == null) return; box.style.display = 'none'; $('#search').value = ''; selectLocation(rs[i]); };
-    } catch (err) { $('#results').innerHTML = `<div style="padding:8px">${esc(err.message)}</div>`; $('#results').style.display = 'block'; }
-  }, 350);
-};
+placeSearch('#search', '#results', (ll, n) => { $('#search').value = ''; selectLocation({name:n.split(',').slice(0, 2).join(','), lat:ll[0], lon:ll[1]}); });
 
 // ---------- alerts ----------
 async function loadAlerts(initial) {

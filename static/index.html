@@ -43,6 +43,9 @@
         <label class="f" for="dIn">Destination</label>
         <div class="search" style="max-width:none"><input id="dIn" type="text" placeholder="Search destination" autocomplete="off"><div class="results" id="dRes"></div></div>
         <button class="btn alt sm" id="pickD">Pick on map</button> <button class="btn alt sm" id="useD">Use selected location</button><br>
+        <label class="f" for="svName">Saved places (stored in this browser only)</label>
+        <input id="svName" type="text" placeholder="Name, e.g. Home" maxlength="40"> <button class="btn alt sm" id="svBtn">Save selected map location</button>
+        <div id="svList" class="muted"></div><br>
         <button class="btn" id="goRoute">Find routes</button> <button class="btn alt" id="clrRoute">Clear</button>
         <div id="routeOut"></div></div>
       <div class="tabpane" id="t-report">
