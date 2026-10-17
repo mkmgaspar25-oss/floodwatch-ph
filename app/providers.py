@@ -169,3 +169,66 @@ async def geocode_address(q):
         if raw:
             return _hits(raw, "exact address not found - showing a wider area")
     return []
+
+
+async def photon(q, lat=None, lon=None):
+    """Typeahead search (landmarks, POIs, streets) on OpenStreetMap data via Photon, which is built for
+    search-as-you-type. Public instance is fair-use only; self-host Photon for heavy traffic."""
+    params = {"q": q, "limit": 6, "lang": "en", "bbox": "116.9,4.5,126.7,21.2"}
+    if lat is not None and lon is not None:
+        params.update({"lat": round(lat, 2), "lon": round(lon, 2)})   # bias results toward the selected area
+    raw, _, _ = await cached_get("https://photon.komoot.io/api/", params, 86400)
+    out = []
+    for f in raw.get("features", []):
+        p = f.get("properties", {})
+        if p.get("countrycode") and p["countrycode"] != "PH":
+            continue
+        lo, la = f["geometry"]["coordinates"]
+        street = " ".join(x for x in (p.get("housenumber"), p.get("street")) if x)
+        parts = [p.get("name"), street or None, p.get("district"), p.get("city") or p.get("county"), p.get("state")]
+        name = ", ".join(dict.fromkeys(x for x in parts if x))
+        if name:
+            out.append({"name": name, "region": None, "lat": la, "lon": lo, "note": None})
+    return out
+
+
+async def geocode_combined(q, lat=None, lon=None):
+    results, errors = [], 0
+    try:
+        results += await photon(q, lat, lon)
+    except ProviderError:
+        errors += 1
+    try:
+        for pl in await geocode(q):
+            label = f"{pl['name']}, {pl['region']}" if pl["region"] else pl["name"]
+            if not any(pl["name"].lower() in r["name"].lower() for r in results):
+                results.append({**pl, "name": label, "region": None, "note": None})
+    except ProviderError:
+        errors += 1
+    if errors == 2:
+        raise ProviderError("both geocoders unreachable")
+    return results[:10]
+
+
+_text_cache = {}
+
+
+async def get_pagasa_ncr():
+    """Fetch + parse PAGASA's NCR page (cached 5 min; stale copy served if PAGASA is unreachable)."""
+    from . import pagasa
+    key, now = pagasa.URL_NCR, time.time()
+    hit = _text_cache.get(key)
+    stale = False
+    if not (hit and now - hit[0] < 300):
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                         headers={"User-Agent": "FloodWatchPH/1.0 (student project; links back to PAGASA)"}) as c:
+                r = await c.get(key)
+                r.raise_for_status()
+            hit = (now, pagasa.parse_ncr(r.text))
+            _text_cache[key] = hit
+        except Exception as e:
+            if not hit:
+                raise ProviderError(f"{type(e).__name__}: {e}")
+            stale = True
+    return {**hit[1], "fetched_at": iso(hit[0]), "stale": stale, "source_url": key, "region": "National Capital Region (Metro Manila)"}

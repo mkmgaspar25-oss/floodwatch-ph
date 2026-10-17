@@ -76,12 +76,22 @@ def health():
 
 
 @app.get("/api/geocode")
-async def geocode(request: Request, q: str = Query(..., min_length=2, max_length=120), address: bool = False):
+async def geocode(request: Request, q: str = Query(..., min_length=2, max_length=120), address: bool = False,
+                  lat: Optional[float] = Query(None, ge=4, le=22), lon: Optional[float] = Query(None, ge=115, le=128)):
     rate_limit(("addr:" if address else "geo:") + client_hash(request), 20 if address else 120, 60)
     try:
-        return await (providers.geocode_address(q) if address else providers.geocode(q))
+        return await (providers.geocode_address(q) if address else providers.geocode_combined(q, lat, lon))
     except providers.ProviderError as e:
         raise HTTPException(502, f"Geocoding unavailable ({e})")
+
+
+@app.get("/api/pagasa")
+async def pagasa_status():
+    """PAGASA's own published text for Metro Manila (rainfall + thunderstorm). Parsed from the public page; not an API."""
+    try:
+        return await providers.get_pagasa_ncr()
+    except providers.ProviderError as e:
+        raise HTTPException(502, f"Could not reach or read PAGASA's page ({e}). Check pagasa.dost.gov.ph directly.")
 
 
 @app.get("/api/monitored")
@@ -163,6 +173,12 @@ async def submit_report(request: Request, lat: float = Form(..., ge=4, le=22), l
     now = service.now_iso()
     rid, _ = db.run("INSERT INTO flood_reports(lat,lon,description,depth_cm,passable,photo,status,created_at,updated_at,reporter_hash)"
                     " VALUES(?,?,?,?,?,?,'Unverified',?,?,?)", (lat, lon, desc, depth_cm, passable, fname, now, now, who))
+    since = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    near = [r for r in db.q("SELECT id,lat,lon,reporter_hash FROM flood_reports WHERE status='Unverified' AND created_at>?", (since,))
+            if risk.haversine_km(lat, lon, r["lat"], r["lon"]) <= 0.3]
+    if len({r["reporter_hash"] for r in near}) >= 3:       # 3+ distinct reporters within 300 m in 3 h -> flag for admin
+        db.run(f"UPDATE flood_reports SET status='Under Review', updated_at=? WHERE id IN ({','.join('?' * len(near))})",
+               (service.now_iso(), *[r["id"] for r in near]))
     return {"id": rid, "status": "Unverified", "message": "Report received. It is unverified until reviewed by an administrator."}
 
 
@@ -177,6 +193,49 @@ def set_status(rid: int, body: StatusIn, request: Request, x_admin_token: Option
     if not n:
         raise HTTPException(404, "Report not found")
     return {"id": rid, "status": body.status}
+
+
+class AreaIn(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    city: Optional[str] = Field(None, max_length=80)
+    lat: float = Field(ge=4, le=22)
+    lon: float = Field(ge=115, le=128)
+    frequency: Optional[str] = Field(None, max_length=200)
+    causes: Optional[str] = Field(None, max_length=300)
+    last_event: Optional[str] = Field(None, max_length=100)
+    source: Optional[str] = Field(None, max_length=200)
+    verification: Literal["Unverified starter data", "Verified"] = "Unverified starter data"
+    verified_on: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+_AREA_COLS = "name,city,lat,lon,frequency,causes,last_event,source,verification,verified_on"
+
+
+@app.post("/api/admin/areas", status_code=201)
+def add_area(a: AreaIn, request: Request, x_admin_token: Optional[str] = Header(None)):
+    require_admin(x_admin_token, request)
+    rid, _ = db.run(f"INSERT INTO flood_prone_areas({_AREA_COLS}) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (a.name, a.city, a.lat, a.lon, a.frequency, a.causes, a.last_event, a.source, a.verification, a.verified_on))
+    return {"id": rid}
+
+
+@app.put("/api/admin/areas/{aid}")
+def edit_area(aid: int, a: AreaIn, request: Request, x_admin_token: Optional[str] = Header(None)):
+    require_admin(x_admin_token, request)
+    _, n = db.run("UPDATE flood_prone_areas SET name=?,city=?,lat=?,lon=?,frequency=?,causes=?,last_event=?,source=?,verification=?,verified_on=? WHERE id=?",
+                  (a.name, a.city, a.lat, a.lon, a.frequency, a.causes, a.last_event, a.source, a.verification, a.verified_on, aid))
+    if not n:
+        raise HTTPException(404, "Area not found")
+    return {"id": aid}
+
+
+@app.delete("/api/admin/areas/{aid}")
+def delete_area(aid: int, request: Request, x_admin_token: Optional[str] = Header(None)):
+    require_admin(x_admin_token, request)
+    _, n = db.run("DELETE FROM flood_prone_areas WHERE id=?", (aid,))
+    if not n:
+        raise HTTPException(404, "Area not found")
+    return {"deleted": aid}
 
 
 class AdvisoryIn(BaseModel):
