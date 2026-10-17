@@ -103,7 +103,7 @@ async def get_history(lat, lon, days):
 async def geocode(q):
     raw, _, _ = await cached_get("https://geocoding-api.open-meteo.com/v1/search",
                                  {"name": q, "count": 8, "language": "en", "country_code": "PH"}, 86400)
-    return [{"name": r["name"], "region": r.get("admin1"), "lat": r["latitude"], "lon": r["longitude"]}
+    return [{"name": r["name"], "region": ", ".join(x for x in (r.get("admin2"), r.get("admin1")) if x) or None, "lat": r["latitude"], "lon": r["longitude"]}
             for r in raw.get("results", [])]
 
 
@@ -124,3 +124,48 @@ async def get_routes(o, d):
     if raw.get("code") != "Ok":
         raise ProviderError(f"Routing failed: {raw.get('code')}")
     return raw["routes"]
+
+
+_nom_lock = asyncio.Lock()
+_nom_last = 0.0
+
+
+async def _nominatim(q):
+    global _nom_last
+    key = ("https://nominatim.openstreetmap.org/search", (("q", q),))
+    if not (key in _cache and time.time() - _cache[key][0] < 86400):
+        async with _nom_lock:                       # public-instance policy: max 1 request/second
+            wait = 1.1 - (time.time() - _nom_last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _nom_last = time.time()
+    raw, _, _ = await cached_get("https://nominatim.openstreetmap.org/search",
+                                 {"q": q, "format": "jsonv2", "countrycodes": "ph", "limit": 6}, 86400)
+    return raw
+
+
+def _hits(raw, note=None):
+    return [{"name": r["display_name"], "region": None, "lat": float(r["lat"]), "lon": float(r["lon"]),
+             "note": note or ("exact building/address" if r.get("addresstype") in ("house", "building", "place") or r.get("category") in ("building", "amenity", "shop", "office") else "approximate: street or area level")}
+            for r in raw]
+
+
+async def geocode_address(q):
+    """Street-address search via OpenStreetMap Nominatim (no search-as-you-type; the UI calls this on Enter).
+    OSM house-number coverage in the Philippines is incomplete, so we retry progressively simpler queries
+    and say clearly when a result is only street- or area-level."""
+    import re
+    raw = await _nominatim(q)
+    if raw:
+        return _hits(raw)
+    stripped = re.sub(r"^\s*[\w-]*\d[\w-]*[,\s]+", "", q).strip()       # drop a leading house/lot number
+    if stripped and stripped != q:
+        raw = await _nominatim(stripped)
+        if raw:
+            return _hits(raw, "house number not found - showing the street/area instead")
+    parts = [x.strip() for x in q.split(",") if x.strip()]
+    if len(parts) > 2:                                                     # drop the most specific part
+        raw = await _nominatim(", ".join(parts[1:]))
+        if raw:
+            return _hits(raw, "exact address not found - showing a wider area")
+    return []

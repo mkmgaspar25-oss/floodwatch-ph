@@ -5,7 +5,7 @@ import asyncio, hashlib, hmac, os, re, time, uuid, logging  # noqa: E402
 from collections import defaultdict, deque  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
-from typing import Literal, Optional  # noqa: E402
+from typing import Annotated, Literal, Optional  # noqa: E402
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
@@ -59,8 +59,8 @@ def require_admin(token: Optional[str], request: Request):
         raise HTTPException(401, "Invalid admin token")
 
 
-LAT = Query(..., ge=4, le=22)
-LON = Query(..., ge=115, le=128)
+LAT = Annotated[float, Query(ge=4, le=22)]      # Annotated types are safe to share between endpoints
+LON = Annotated[float, Query(ge=115, le=128)]
 
 
 async def forecast_or_502(lat, lon):
@@ -76,10 +76,10 @@ def health():
 
 
 @app.get("/api/geocode")
-async def geocode(request: Request, q: str = Query(..., min_length=2, max_length=80)):
-    rate_limit("geo:" + client_hash(request), 120, 60)
+async def geocode(request: Request, q: str = Query(..., min_length=2, max_length=120), address: bool = False):
+    rate_limit(("addr:" if address else "geo:") + client_hash(request), 20 if address else 120, 60)
     try:
-        return await providers.geocode(q)
+        return await (providers.geocode_address(q) if address else providers.geocode(q))
     except providers.ProviderError as e:
         raise HTTPException(502, f"Geocoding unavailable ({e})")
 
@@ -90,7 +90,7 @@ def monitored():
 
 
 @app.get("/api/weather")
-async def weather(lat: float = LAT, lon: float = LON):
+async def weather(lat: LAT, lon: LON):
     fc = await forecast_or_502(lat, lon)
     return {**fc, "rain_window": risk.rain_window(fc)}
 
@@ -114,7 +114,7 @@ async def flood_areas(with_risk: bool = False):
 
 
 @app.get("/api/risk")
-async def risk_endpoint(lat: float = LAT, lon: float = LON, area_id: Optional[int] = None):
+async def risk_endpoint(lat: LAT, lon: LON, area_id: Optional[int] = None):
     susceptible = False
     if area_id is not None:
         susceptible = bool(db.q("SELECT 1 FROM flood_prone_areas WHERE id=?", (area_id,)))
@@ -221,8 +221,7 @@ def list_alerts(include_expired: bool = True, limit: int = Query(100, ge=1, le=2
 
 
 @app.get("/api/route-risk")
-async def route_risk(o_lat: float = LAT, o_lon: float = LON, d_lat: float = Query(..., ge=4, le=22),
-                     d_lon: float = Query(..., ge=115, le=128)):
+async def route_risk(o_lat: LAT, o_lon: LON, d_lat: LAT, d_lon: LON):
     try:
         routes = await providers.get_routes((o_lat, o_lon), (d_lat, d_lon))
     except providers.ProviderError as e:
@@ -248,7 +247,7 @@ async def route_risk(o_lat: float = LAT, o_lon: float = LON, d_lat: float = Quer
 
 
 @app.get("/api/history")
-async def history(lat: float = LAT, lon: float = LON, days: int = Query(14, ge=3, le=60)):
+async def history(lat: LAT, lon: LON, days: int = Query(14, ge=3, le=60)):
     try:
         rain = await providers.get_history(lat, lon, days)
     except providers.ProviderError as e:
