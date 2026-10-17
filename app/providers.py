@@ -2,6 +2,7 @@
 RainViewer (radar tiles), OSRM demo server (routing). Verify each provider's current terms,
 rate limits and attribution before production use (see README)."""
 import asyncio
+import re
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -140,35 +141,102 @@ async def _nominatim(q):
                 await asyncio.sleep(wait)
             _nom_last = time.time()
     raw, _, _ = await cached_get("https://nominatim.openstreetmap.org/search",
-                                 {"q": q, "format": "jsonv2", "countrycodes": "ph", "limit": 6}, 86400)
+                                 {"q": q, "format": "jsonv2", "countrycodes": "ph", "limit": 6, "addressdetails": 1}, 86400)
     return raw
 
 
+def _brgy(addr):
+    """Best-effort barangay/area label from Nominatim address details (OSM tagging of barangays varies)."""
+    if not addr:
+        return None
+    for k, v in addr.items():
+        if k in ("postcode", "house_number", "country_code") or not isinstance(v, str):
+            continue
+        if re.search(r"\b(barangay|brgy)\b", v, re.I) or re.fullmatch(r"\d{1,3}", v.strip()):
+            return v if re.search(r"[A-Za-z]", v) else f"Barangay {v}"
+    for k in ("neighbourhood", "suburb", "quarter", "city_district"):
+        if addr.get(k):
+            return addr[k]
+    return None
+
+
 def _hits(raw, note=None):
-    return [{"name": r["display_name"], "region": None, "lat": float(r["lat"]), "lon": float(r["lon"]),
-             "note": note or ("exact building/address" if r.get("addresstype") in ("house", "building", "place") or r.get("category") in ("building", "amenity", "shop", "office") else "approximate: street or area level")}
-            for r in raw]
+    out = []
+    for r in raw:
+        exact = r.get("addresstype") in ("house", "building", "place") or r.get("category") in ("building", "amenity", "shop", "office")
+        out.append({"name": r["display_name"], "region": None, "lat": float(r["lat"]), "lon": float(r["lon"]),
+                    "note": note or ("exact building/address" if exact else "approximate: street or area level"),
+                    "brgy": _brgy(r.get("address"))})
+    return out
+
+
+_ABBR = [(r"\bSt\.?(?=[\s,]|$)", "Street"), (r"\bAve\.?(?=[\s,]|$)", "Avenue"), (r"\bBlvd\.?(?=[\s,]|$)", "Boulevard"),
+         (r"\bRd\.?(?=[\s,]|$)", "Road"), (r"\bSta\.?(?=\s)", "Santa"), (r"\bSto\.?(?=\s)", "Santo")]
+
+
+def expand_abbr(q):
+    for pat, full in _ABBR:
+        q = re.sub(pat, full, q)
+    return q
+
+
+def clean_ph_address(q):
+    """Philippine address cleanup: pulls out 'Barangay 828' / 'Brgy. 828', drops the 4-digit ZIP after the city and
+    'Philippines'. Returns (cleaned_query, barangay_or_None)."""
+    brgy = None
+    m = re.search(r"\b(?:barangay|brgy|bgy|brg)\.?\s*#?\s*(\w+)", q, re.I)
+    if m:
+        brgy = m.group(1)
+        q = q[:m.start()] + " " + q[m.end():]
+    q = re.sub(r"\bPhilippines\b", "", q, flags=re.I)
+    q = " ".join(q.replace(" ,", ",").split()).strip(" ,")
+    q = re.sub(r"(?<=[A-Za-z.])\s+\d{4}(?=\s*(?:,|$))", "", q)
+    q = re.sub(r"\s*,(\s*,)+", ",", q).strip(" ,")
+    return q, brgy
 
 
 async def geocode_address(q):
-    """Street-address search via OpenStreetMap Nominatim (no search-as-you-type; the UI calls this on Enter).
-    OSM house-number coverage in the Philippines is incomplete, so we retry progressively simpler queries
-    and say clearly when a result is only street- or area-level."""
-    import re
-    raw = await _nominatim(q)
-    if raw:
-        return _hits(raw)
-    stripped = re.sub(r"^\s*[\w-]*\d[\w-]*[,\s]+", "", q).strip()       # drop a leading house/lot number
-    if stripped and stripped != q:
-        raw = await _nominatim(stripped)
+    """Street/landmark/barangay search on OpenStreetMap Nominatim with Philippine address handling.
+    Tries progressively looser versions of the address and says which one matched. House-number
+    coverage in OSM is incomplete; barangay labels come from OSM tags and may be missing."""
+    cleaned, brgy = clean_ph_address(q)
+    cleaned = cleaned or q
+    parts = [x.strip() for x in cleaned.split(",") if x.strip()]
+    tail = ", ".join(parts[-2:]) if len(parts) >= 2 else None
+    tries = [(expand_abbr(cleaned), None)]
+    if expand_abbr(cleaned) != cleaned:
+        tries.append((cleaned, None))
+    no_num = re.sub(r"^\s*[\w-]*\d[\w-]*[,\s]+", "", cleaned).strip()
+    if no_num and no_num != cleaned:
+        tries.append((expand_abbr(no_num), "house number not found - showing the street/area instead"))
+    if parts:
+        loose = re.sub(r"\b(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\b\.?", "", parts[0], flags=re.I).strip()
+        if loose and loose != parts[0] and len(parts) > 1:
+            tries.append((", ".join([loose] + parts[1:]), "street name matched loosely (suffix ignored)"))
+    if len(parts) > 2:
+        tries.append((expand_abbr(", ".join(parts[1:])), "exact address not found - showing a wider area"))
+    if tail:
+        tries.append((tail, "area-level result: that street was not found in the map data"))
+    out = []
+    for i, (query, note) in enumerate(tries):
+        try:
+            raw = await _nominatim(query)
+        except ProviderError:
+            if i == 0:
+                raise
+            continue
         if raw:
-            return _hits(raw, "house number not found - showing the street/area instead")
-    parts = [x.strip() for x in q.split(",") if x.strip()]
-    if len(parts) > 2:                                                     # drop the most specific part
-        raw = await _nominatim(", ".join(parts[1:]))
-        if raw:
-            return _hits(raw, "exact address not found - showing a wider area")
-    return []
+            out = _hits(raw, note)
+            break
+    if brgy:
+        try:
+            raw = await _nominatim(f"Barangay {brgy}" + (f", {tail}" if tail else ""))
+        except ProviderError:
+            raw = []
+        for h in _hits([r for r in raw if str(brgy).lower() in r["display_name"].lower()][:1], f"Barangay {brgy} area (centre of the barangay)"):
+            h["brgy"] = h["brgy"] or f"Barangay {brgy}"
+            out.append(h)
+    return out
 
 
 async def photon(q, lat=None, lon=None):
@@ -188,7 +256,7 @@ async def photon(q, lat=None, lon=None):
         parts = [p.get("name"), street or None, p.get("district"), p.get("city") or p.get("county"), p.get("state")]
         name = ", ".join(dict.fromkeys(x for x in parts if x))
         if name:
-            out.append({"name": name, "region": None, "lat": la, "lon": lo, "note": None})
+            out.append({"name": name, "region": None, "lat": la, "lon": lo, "note": None, "brgy": p.get("locality") or p.get("district")})
     return out
 
 
