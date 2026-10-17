@@ -44,3 +44,10 @@ input[type=text],input[type=number],select,textarea{width:100%;padding:7px 9px;b
 footer{padding:14px 16px;color:var(--muted);font-size:12px;text-align:center}
 @media(max-width:1000px){.layout,.grid2{grid-template-columns:1fr}#map{height:60vh}.side{max-height:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.dcard{border-radius:14px;padding:10px 6px;text-align:center;border:1px solid var(--line);transition:transform .15s,box-shadow .15s;font-size:13px}
+.dcard:hover{transform:translateY(-3px);box-shadow:var(--shadow)}.dcard .dd{font-weight:700}.dcard .di{font-size:36px;line-height:1.25}
+.dcard .bar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);margin:6px 10px;overflow:hidden}.dcard .bar i{display:block;height:100%;background:#4c9bff;border-radius:3px}
+.r0{background:linear-gradient(160deg,rgba(255,200,60,.30),rgba(255,150,60,.10))}.r1{background:linear-gradient(160deg,rgba(76,155,255,.22),rgba(76,155,255,.06))}
+.r2{background:linear-gradient(160deg,rgba(40,110,230,.38),rgba(90,70,200,.14))}.r3{background:linear-gradient(160deg,rgba(150,60,200,.40),rgba(217,45,45,.22))}
+.search{position:relative}

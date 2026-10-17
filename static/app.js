@@ -102,8 +102,8 @@ window.pickLoc = (lat, lon, name) => { map.closePopup(); selectLocation({name:na
 map.on('click', e => {
   const {lat, lng} = e.latlng, ll = [lat, lng];
   if (S.mode === 'select') return pickLoc(lat, lng);
-  if (S.mode === 'origin') { S.o = ll; S.oName = 'Pinned point'; $('#oIn').value = `Pinned ${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
-  if (S.mode === 'dest') { S.d = ll; S.dName = 'Pinned point'; $('#dIn').value = `Pinned ${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
+  if (S.mode === 'origin') { S.o = ll; S.oName = 'Pinned point'; S.oBr = null; $('#oBr').textContent = ''; $('#oIn').value = `Pinned ${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
+  if (S.mode === 'dest') { S.d = ll; S.dName = 'Pinned point'; S.dBr = null; $('#dBr').textContent = ''; $('#dIn').value = `Pinned ${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
   if (S.mode === 'report') { S.rpt = ll; $('#rTxt').textContent = `${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
   setMode('select');
 });
@@ -117,6 +117,8 @@ $('#svBtn').onclick = () => { const n = $('#svName').value.trim(); if (!n) retur
   const l = places(); l.push({name:n, lat:S.loc.lat, lon:S.loc.lon, note:'saved'}); localStorage.fwPlaces = JSON.stringify(l); $('#svName').value = ''; renderSaved(); toast(`Saved "${n}" at the currently selected location.`, 'low'); };
 $('#svList').onclick = e => { const i = e.target.dataset.rm; if (i == null) return; const l = places(); l.splice(+i, 1); localStorage.fwPlaces = JSON.stringify(l); renderSaved(); };
 renderSaved();
+const parseBrgy = v => (String(v || '').match(/\b(?:barangay|brgy|bgy|brg)\.?\s*#?\s*(\w+)/i) || [])[1] || null;
+const brgyLabel = r => r.typed ? `Brgy. ${r.typed} (as entered)` : r.brgy ? `Brgy/area from map data: ${r.brgy}` : null;
 function placeSearch(inId, resId, onPick, btnId) {
   let t; const inp = $(inId), box = $(resId);
   const run = async address => {
@@ -126,20 +128,20 @@ function placeSearch(inId, resId, onPick, btnId) {
       const saved = places().filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
       const rs = [...saved, ...await api('/api/geocode?q=' + encodeURIComponent(q) + (address ? '&address=true' : `&lat=${S.loc.lat}&lon=${S.loc.lon}`))];
       const hint = address ? '' : '<div class="muted" style="padding:6px 10px">Landmark or street address? Press Enter or 🔎 to search.</div>';
-      box.innerHTML = (rs.map((r, i) => `<button type="button" data-i="${i}">${r.note === 'saved' ? '⭐ ' : ''}${esc(r.name)}${r.region ? ', ' + esc(r.region) : ''}${r.note && r.note !== 'saved' ? `<br><small class="muted">${esc(r.note)}</small>` : ''}</button>`).join('')
+      box.innerHTML = (rs.map((r, i) => `<button type="button" data-i="${i}">${r.note === 'saved' ? '⭐ ' : ''}${esc(r.name)}${r.region ? ', ' + esc(r.region) : ''}${r.note && r.note !== 'saved' ? `<br><small class="muted">${esc(r.note)}</small>` : ''}${r.brgy ? `<br><small class="muted">📍 Brgy/area: ${esc(r.brgy)}</small>` : ''}</button>`).join('')
         || `<div style="padding:8px">No matches.${address ? ' Try street + city only (no house number), or use Pick on map.' : ''}</div>`) + hint;
       box.onclick = ev => { const b = ev.target.closest('button'); if (!b) return; const r = rs[+b.dataset.i]; box.style.display = 'none';
-        inp.value = r.name + (r.region ? ', ' + r.region : ''); onPick([r.lat, r.lon], inp.value); };
+        inp.value = r.name + (r.region ? ', ' + r.region : ''); onPick([r.lat, r.lon], inp.value, {...r, typed:parseBrgy(q)}); };
     } catch (e) { box.innerHTML = `<div style="padding:8px">${esc(e.message)}</div>`; }
   };
   inp.oninput = () => { clearTimeout(t); t = setTimeout(() => run(false), 350); };
   if (btnId) $(btnId).onclick = () => { clearTimeout(t); run(true); };
   inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); run(true); } };
 }
-placeSearch('#oIn', '#oRes', (ll, n) => { S.o = ll; S.oName = n; }, '#goO');
-placeSearch('#dIn', '#dRes', (ll, n) => { S.d = ll; S.dName = n; }, '#goD');
-$('#useO').onclick = () => { S.o = [S.loc.lat, S.loc.lon]; S.oName = S.loc.name; $('#oIn').value = S.loc.name; };
-$('#useD').onclick = () => { S.d = [S.loc.lat, S.loc.lon]; S.dName = S.loc.name; $('#dIn').value = S.loc.name; };
+placeSearch('#oIn', '#oRes', (ll, n, r) => { S.o = ll; S.oName = n; S.oBr = brgyLabel(r); $('#oBr').textContent = S.oBr ? '📍 ' + S.oBr : ''; }, '#goO');
+placeSearch('#dIn', '#dRes', (ll, n, r) => { S.d = ll; S.dName = n; S.dBr = brgyLabel(r); $('#dBr').textContent = S.dBr ? '📍 ' + S.dBr : ''; }, '#goD');
+$('#useO').onclick = () => { S.oBr = null; $('#oBr').textContent = ''; S.o = [S.loc.lat, S.loc.lon]; S.oName = S.loc.name; $('#oIn').value = S.loc.name; };
+$('#useD').onclick = () => { S.dBr = null; $('#dBr').textContent = ''; S.d = [S.loc.lat, S.loc.lon]; S.dName = S.loc.name; $('#dIn').value = S.loc.name; };
 $('#pickO').onclick = () => setMode('origin'); $('#pickD').onclick = () => setMode('dest'); $('#pickR').onclick = () => setMode('report');
 async function selectLocation(loc) {
   S.loc = loc; $('#locName').textContent = loc.name; map.flyTo([loc.lat, loc.lon], Math.max(map.getZoom(), 12));
@@ -246,13 +248,13 @@ $('#goRoute').onclick = async () => {
     const r = await api(`/api/route-risk?o_lat=${S.o[0]}&o_lon=${S.o[1]}&d_lat=${S.d[0]}&d_lon=${S.d[1]}`); G.route.clearLayers();
     const lines = r.routes.map(rt => { const c = rt.verified_flood_reports ? COL.severe : rt.hazards.length ? COL.high : '#1d6fe0';
       return L.geoJSON(rt.geometry, {style:{color:c, weight:5, opacity:.8}}).addTo(G.route); });
-    $('#routeOut').innerHTML = `<p><b>${esc(S.oName || 'Origin')}</b> → <b>${esc(S.dName || 'Destination')}</b></p>` + r.routes.map((rt, i) => `<div class="rt" data-i="${i}"><b>Route ${i + 1}</b>: ${rt.distance_km} km, ~${rt.duration_min} min (no live traffic)<br>${esc(rt.warning)}
+    $('#routeOut').innerHTML = `<p><b>${esc(S.oName || 'Origin')}</b>${S.oBr ? '<br><small>📍 ' + esc(S.oBr) + '</small>' : ''}<br>→ <b>${esc(S.dName || 'Destination')}</b>${S.dBr ? '<br><small>📍 ' + esc(S.dBr) + '</small>' : ''}</p>` + r.routes.map((rt, i) => `<div class="rt" data-i="${i}"><b>Route ${i + 1}</b>: ${rt.distance_km} km, ~${rt.duration_min} min (no live traffic)<br>${esc(rt.warning)}
       <ul class="clean">${rt.hazards.map(h => `<li>${esc(h.name)} (${h.distance_m} m away) — ${esc(h.type)}</li>`).join('')}</ul></div>`).join('') + `<p class="muted">${esc(r.disclaimer)}</p>`;
     $('#routeOut').onclick = e => { const el = e.target.closest('.rt'); if (!el) return; document.querySelectorAll('.rt').forEach(x => x.classList.remove('sel')); el.classList.add('sel'); map.fitBounds(lines[+el.dataset.i].getBounds()); };
     map.fitBounds(L.featureGroup(lines).getBounds());
   } catch (e) { $('#routeOut').innerHTML = `<p class="muted">Routing failed: ${esc(e.message)}</p>`; }
 };
-$('#clrRoute').onclick = () => { G.route.clearLayers(); S.o = S.d = null; S.oName = S.dName = null; $('#oIn').value = $('#dIn').value = ''; $('#routeOut').innerHTML = ''; };
+$('#clrRoute').onclick = () => { G.route.clearLayers(); S.o = S.d = null; S.oName = S.dName = S.oBr = S.dBr = null; $('#oBr').textContent = $('#dBr').textContent = ''; $('#oIn').value = $('#dIn').value = ''; $('#routeOut').innerHTML = ''; };
 
 // ---------- report form ----------
 $('#repForm').onsubmit = async e => {

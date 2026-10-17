@@ -11,7 +11,7 @@
 <header>
   <span class="logo">🌧 FloodWatch PH</span>
   <span class="loc" id="locName">—</span>
-  <div class="search"><input id="search" type="text" placeholder="Search a place in the Philippines" aria-label="Search location" autocomplete="off"><div id="results" role="listbox"></div></div>
+  <div class="search"><input id="search" type="text" placeholder="Place, landmark or address (Enter to search)" aria-label="Search location" autocomplete="off"><button class="ib" id="searchGo" aria-label="Search landmarks and addresses" style="position:absolute;right:2px;top:2px;padding:3px 8px">🔎</button><div id="results" role="listbox"></div></div>
   <span class="upd" id="updated">Last update: —</span><span class="sp"></span>
   <button class="ib" id="bell" aria-label="Open alert center">🔔<span class="badge" id="badge" hidden>0</span></button>
   <button class="ib" id="theme" aria-label="Toggle light/dark mode">🌓</button>
@@ -38,11 +38,11 @@
       <div class="tabpane" id="t-route">
         <p class="muted">Type a place name (e.g. "SM North EDSA") or pick a point on the map.</p>
         <label class="f" for="oIn">Origin</label>
-        <div class="search" style="max-width:none"><input id="oIn" type="text" placeholder="Search origin" autocomplete="off"><div class="results" id="oRes"></div></div>
-        <button class="btn alt sm" id="pickO">Pick on map</button> <button class="btn alt sm" id="useO">Use selected location</button>
+        <div class="search" style="max-width:none"><input id="oIn" type="text" placeholder="Search origin" autocomplete="off"><div class="results" id="oRes"></div></div><div id="oBr" class="muted"></div>
+        <button class="btn alt sm" id="goO">🔎 Search</button> <button class="btn alt sm" id="pickO">Pick on map</button> <button class="btn alt sm" id="useO">Use selected location</button>
         <label class="f" for="dIn">Destination</label>
-        <div class="search" style="max-width:none"><input id="dIn" type="text" placeholder="Search destination" autocomplete="off"><div class="results" id="dRes"></div></div>
-        <button class="btn alt sm" id="pickD">Pick on map</button> <button class="btn alt sm" id="useD">Use selected location</button><br>
+        <div class="search" style="max-width:none"><input id="dIn" type="text" placeholder="Search destination" autocomplete="off"><div class="results" id="dRes"></div></div><div id="dBr" class="muted"></div>
+        <button class="btn alt sm" id="goD">🔎 Search</button> <button class="btn alt sm" id="pickD">Pick on map</button> <button class="btn alt sm" id="useD">Use selected location</button><br>
         <label class="f" for="svName">Saved places (stored in this browser only)</label>
         <input id="svName" type="text" placeholder="Name, e.g. Home" maxlength="40"> <button class="btn alt sm" id="svBtn">Save selected map location</button>
         <div id="svList" class="muted"></div><br>
@@ -65,12 +65,37 @@
         <button class="btn alt" id="push">Enable browser notifications</button> <span id="pushMsg" class="muted"></span><br>
         <button class="btn alt" id="geo">Use my location</button>
         <label class="f" for="admTok">Administrator token (this tab only)</label><input id="admTok" type="text" autocomplete="off" placeholder="enables report review buttons">
+        <div id="admBox" hidden><h4>Post official advisory (admin)</h4>
+          <form id="advForm"><p class="muted">Copy details from the official PAGASA/NDRRMC/LGU bulletin. The link is required and shown to viewers.</p>
+            <label class="f" for="avTitle">Title</label><input id="avTitle" type="text" required minlength="3" placeholder="Heavy Rainfall Warning (Orange)">
+            <label class="f" for="avSev">Severity</label><select id="avSev"><option value="low">Low (yellow)</option><option value="moderate">Moderate</option><option value="high" selected>High (orange)</option><option value="severe">Severe (red)</option></select>
+            <label class="f" for="avSrc">Source</label><input id="avSrc" type="text" required value="PAGASA">
+            <label class="f" for="avUrl">Link to official bulletin</label><input id="avUrl" type="text" required placeholder="https://…">
+            <label class="f" for="avArea">Affected area (text)</label><input id="avArea" type="text" required placeholder="Metro Manila">
+            <label class="f" for="avIssued">Issued (Manila time)</label><input id="avIssued" type="datetime-local" required>
+            <label class="f" for="avExpires">Expires (Manila time)</label><input id="avExpires" type="datetime-local" required>
+            <label class="f"><input id="avGeo" type="checkbox" checked> Draw a warning circle at the selected location, radius <input id="avRad" type="number" value="30" min="1" max="500" style="width:70px"> km</label>
+            <label class="f" for="avRec">Recommended precaution (optional)</label><input id="avRec" type="text" maxlength="500">
+            <button class="btn" type="submit">Publish advisory</button></form>
+        <h4>Flood-prone areas (admin)</h4>
+          <form id="areaForm"><p class="muted">Click "Edit (admin)" on a pin to load it here, or fill this in for a new area. The pin goes at the <b>currently selected map location</b>.</p>
+            <input id="arId" type="hidden">
+            <label class="f" for="arName">Name</label><input id="arName" type="text" required minlength="2">
+            <label class="f" for="arCity">City / municipality</label><input id="arCity" type="text">
+            <label class="f" for="arFreq">Flood frequency / severity (only if documented)</label><input id="arFreq" type="text">
+            <label class="f" for="arCauses">Known causes (only if documented)</label><input id="arCauses" type="text">
+            <label class="f" for="arLast">Last reported flooding event</label><input id="arLast" type="text" placeholder="e.g. 2025-07">
+            <label class="f" for="arSrc">Source of this information</label><input id="arSrc" type="text">
+            <label class="f" for="arVer">Verification</label><select id="arVer"><option>Unverified starter data</option><option>Verified</option></select>
+            <label class="f" for="arVerOn">Verified on</label><input id="arVerOn" type="date">
+            <label class="f"><input id="arMove" type="checkbox" checked> Place pin at the selected map location</label>
+            <button class="btn" type="submit">Save area</button> <button class="btn alt" type="button" id="arDel">Delete</button> <button class="btn alt" type="button" id="arClr">New / clear</button></form></div>
         <p class="muted">Email/SMS notifications require an external service and are not configured.</p></div>
     </aside>
   </div>
   <section class="panel"><h3 style="margin-top:0">Forecast</h3><p id="rainwin" class="muted"></p>
     <div class="grid2"><div><canvas id="chRain" height="180" aria-label="Hourly rainfall chart"></canvas></div><div><canvas id="chTemp" height="180" aria-label="Temperature and wind chart"></canvas></div></div>
-    <h4>7-day forecast</h4><div class="daily" id="daily"></div></section>
+    <h4>7-day forecast <small class="muted">· card colour = forecast daily rain total (visual guide) · bar = max rain probability</small></h4><div class="daily" id="daily"></div></section>
   <section class="panel"><h3 style="margin-top:0">Analytics <select id="days" style="width:auto"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select></h3>
     <div class="grid2"><div><canvas id="chHist" height="180" aria-label="Daily rainfall chart"></canvas></div><div><canvas id="chAl" height="180" aria-label="Alerts and reports per day"></canvas></div></div>
     <p class="muted" id="histNote"></p></section>
