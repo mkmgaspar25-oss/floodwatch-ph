@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: floodwatch-ph
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: IP_HASH_SALT
+        generateValue: true

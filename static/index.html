@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FloodWatch PH — Real-Time Weather and Flood Monitoring</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <span class="logo">🌧 FloodWatch PH</span>
+  <span class="loc" id="locName">—</span>
+  <div class="search"><input id="search" type="text" placeholder="Search a place in the Philippines" aria-label="Search location" autocomplete="off"><div id="results" role="listbox"></div></div>
+  <span class="upd" id="updated">Last update: —</span><span class="sp"></span>
+  <button class="ib" id="bell" aria-label="Open alert center">🔔<span class="badge" id="badge" hidden>0</span></button>
+  <button class="ib" id="theme" aria-label="Toggle light/dark mode">🌓</button>
+  <button class="ib" id="gear" aria-label="Settings">⚙</button>
+</header>
+<main>
+  <div class="banner" id="offline">You appear to be offline. Showing the last data loaded; it may be out of date.</div>
+  <div class="banner" id="stale"></div>
+  <section class="cards" id="cards" aria-live="polite"></section>
+  <div class="layout">
+    <section>
+      <div class="layers" id="layers"></div>
+      <div id="mapwrap"><div id="map" role="application" aria-label="Interactive flood map"></div>
+        <div class="legend" id="legend"></div></div>
+      <p class="muted" id="mapmode">Click the map to select a location.</p>
+    </section>
+    <aside class="panel side">
+      <div class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-t="risk" aria-selected="true">Risk</button><button role="tab" data-t="alerts" aria-selected="false">Alerts</button>
+        <button role="tab" data-t="route" aria-selected="false">Route</button><button role="tab" data-t="report" aria-selected="false">Report</button>
+        <button role="tab" data-t="settings" aria-selected="false">Settings</button></div>
+      <div class="tabpane on" id="t-risk"><div class="skel" style="height:90px">loading</div></div>
+      <div class="tabpane" id="t-alerts"></div>
+      <div class="tabpane" id="t-route">
+        <p class="muted">Type a place name (e.g. "SM North EDSA") or pick a point on the map.</p>
+        <label class="f" for="oIn">Origin</label>
+        <div class="search" style="max-width:none"><input id="oIn" type="text" placeholder="Search origin" autocomplete="off"><div class="results" id="oRes"></div></div>
+        <button class="btn alt sm" id="pickO">Pick on map</button> <button class="btn alt sm" id="useO">Use selected location</button>
+        <label class="f" for="dIn">Destination</label>
+        <div class="search" style="max-width:none"><input id="dIn" type="text" placeholder="Search destination" autocomplete="off"><div class="results" id="dRes"></div></div>
+        <button class="btn alt sm" id="pickD">Pick on map</button> <button class="btn alt sm" id="useD">Use selected location</button><br>
+        <button class="btn" id="goRoute">Find routes</button> <button class="btn alt" id="clrRoute">Clear</button>
+        <div id="routeOut"></div></div>
+      <div class="tabpane" id="t-report">
+        <form id="repForm"><p class="muted">Reports are <b>unverified</b> until an administrator reviews them.</p>
+          <button type="button" class="btn alt" id="pickR">Pick location on map</button> <span id="rTxt" class="muted">not set</span>
+          <label class="f" for="rDesc">What do you see? (10–500 characters)</label><textarea id="rDesc" rows="3" maxlength="500" required></textarea>
+          <label class="f" for="rDepth">Approx. water depth (cm, optional)</label><input id="rDepth" type="number" min="0" max="500">
+          <label class="f" for="rPass">Road passability</label><select id="rPass"><option>Unknown</option><option>Passable</option><option>Passable with caution</option><option>Not passable</option></select>
+          <label class="f" for="rPhoto">Photo (optional, JPEG/PNG/WebP, ≤2 MB)</label><input id="rPhoto" type="file" accept="image/jpeg,image/png,image/webp">
+          <input id="rWeb" type="text" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
+          <button class="btn" type="submit">Submit report</button> <span id="rMsg" class="muted"></span></form>
+        <h4>Recent reports</h4><div id="repList"></div></div>
+      <div class="tabpane" id="t-settings">
+        <label class="f" for="minSev">Notify me for severity at or above</label>
+        <select id="minSev"><option value="0">Low</option><option value="1">Moderate</option><option value="2">High</option><option value="3">Severe</option></select>
+        <label class="f">Monitored locations (alerts shown/notified)</label><div id="monList"></div>
+        <button class="btn alt" id="push">Enable browser notifications</button> <span id="pushMsg" class="muted"></span><br>
+        <button class="btn alt" id="geo">Use my location</button>
+        <label class="f" for="admTok">Administrator token (this tab only)</label><input id="admTok" type="text" autocomplete="off" placeholder="enables report review buttons">
+        <p class="muted">Email/SMS notifications require an external service and are not configured.</p></div>
+    </aside>
+  </div>
+  <section class="panel"><h3 style="margin-top:0">Forecast</h3><p id="rainwin" class="muted"></p>
+    <div class="grid2"><div><canvas id="chRain" height="180" aria-label="Hourly rainfall chart"></canvas></div><div><canvas id="chTemp" height="180" aria-label="Temperature and wind chart"></canvas></div></div>
+    <h4>7-day forecast</h4><div class="daily" id="daily"></div></section>
+  <section class="panel"><h3 style="margin-top:0">Analytics <select id="days" style="width:auto"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select></h3>
+    <div class="grid2"><div><canvas id="chHist" height="180" aria-label="Daily rainfall chart"></canvas></div><div><canvas id="chAl" height="180" aria-label="Alerts and reports per day"></canvas></div></div>
+    <p class="muted" id="histNote"></p></section>
+</main>
+<footer>FloodWatch PH is an informational decision-support tool and does not replace official instructions from PAGASA, NDRRMC or your LGU.
+Data: Open-Meteo (CC BY 4.0), RainViewer radar, OSRM routing, © OpenStreetMap contributors.</footer>
+<div id="toasts" role="status" aria-live="polite"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body></html>
