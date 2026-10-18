@@ -19,15 +19,16 @@ def active_officials(lat, lon):
             or risk.haversine_km(lat, lon, r["lat"], r["lon"]) <= r["radius_km"]]
 
 
-async def risk_for(lat, lon, susceptible=False, with_discharge=False):
+async def risk_for(lat, lon, susceptible=False, with_discharge=False, fc_digits=None):
+    flat, flon = (round(lat, fc_digits), round(lon, fc_digits)) if fc_digits is not None else (lat, lon)   # nearby areas share one forecast
     try:
-        fc = await providers.get_forecast(lat, lon)
+        fc = await providers.get_forecast(flat, flon)
     except providers.ProviderError:
         fc = None
     discharge = None
     if fc and with_discharge:
         try:
-            discharge = await providers.get_discharge(lat, lon)
+            discharge = await providers.get_discharge(flat, flon)
         except providers.ProviderError:
             pass
     return risk.assess(fc, susceptible, nearby_reports(lat, lon), active_officials(lat, lon), discharge)

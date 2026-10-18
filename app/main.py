@@ -126,7 +126,12 @@ async def radar():
 async def flood_areas(with_risk: bool = False):
     rows = db.q("SELECT * FROM flood_prone_areas ORDER BY id")
     if with_risk:
-        res = await asyncio.gather(*[service.risk_for(r["lat"], r["lon"], True) for r in rows], return_exceptions=True)
+        sem = asyncio.Semaphore(3)                        # be gentle with the free weather API
+
+        async def one(r):
+            async with sem:
+                return await service.risk_for(r["lat"], r["lon"], True, fc_digits=1)   # ~11 km grid, like the model resolution
+        res = await asyncio.gather(*[one(r) for r in rows], return_exceptions=True)
         for r, x in zip(rows, res):
             r["risk"] = x if isinstance(x, dict) else {"level": risk.INSUFFICIENT, "factors": [], "missing": ["Assessment failed"]}
     return rows

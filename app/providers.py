@@ -24,17 +24,21 @@ async def cached_get(url, params, ttl):
         hit, now = _cache.get(key), time.time()
         if hit and now - hit[0] < ttl:
             return hit[1], hit[0], False
-        try:
-            async with httpx.AsyncClient(timeout=12, headers={"User-Agent": "FloodWatchPH/1.0"}) as c:
-                r = await c.get(url, params=params)
-                r.raise_for_status()
-                data = r.json()
-            _cache[key] = (now, data)
-            return data, now, False
-        except Exception as e:
-            if hit:                       # serve stale, flagged
-                return hit[1], hit[0], True
-            raise ProviderError(f"{type(e).__name__}: {e}")
+        for attempt in range(2):                      # one quick retry smooths over rate-limit blips
+            try:
+                async with httpx.AsyncClient(timeout=12, headers={"User-Agent": "FloodWatchPH/1.0"}) as c:
+                    r = await c.get(url, params=params)
+                    r.raise_for_status()
+                    data = r.json()
+                _cache[key] = (now, data)
+                return data, now, False
+            except Exception as e:
+                if attempt == 0:
+                    await asyncio.sleep(0.8)
+                    continue
+                if hit:                               # serve stale, flagged
+                    return hit[1], hit[0], True
+                raise ProviderError(f"{type(e).__name__}: {e}")
 
 
 def iso(ts):
