@@ -85,6 +85,15 @@ async def geocode(request: Request, q: str = Query(..., min_length=2, max_length
         raise HTTPException(502, f"Geocoding unavailable ({e})")
 
 
+@app.get("/api/reverse")
+async def reverse_geocode(request: Request, lat: LAT, lon: LON):
+    rate_limit("rev:" + client_hash(request), 30, 60)
+    try:
+        return await providers.reverse(lat, lon)
+    except providers.ProviderError as e:
+        raise HTTPException(502, f"Place-name lookup unavailable ({e})")
+
+
 @app.get("/api/pagasa")
 async def pagasa_status():
     """PAGASA's own published text for Metro Manila (rainfall + thunderstorm). Parsed from the public page; not an API."""
@@ -291,14 +300,21 @@ async def route_risk(o_lat: LAT, o_lon: LON, d_lat: LAT, d_lon: LON):
     hazards += [{"type": "flood report", "id": r["id"], "name": f"Report #{r['id']} ({r['status']})", "lat": r["lat"],
                  "lon": r["lon"], "basis": r["description"][:120], "status": r["status"]}
                 for r in db.q("SELECT * FROM flood_reports WHERE status IN ('Verified','Under Review','Unverified')")]
+    for a in db.q("SELECT * FROM alerts WHERE kind='official' AND expires_at>? AND lat IS NOT NULL AND radius_km IS NOT NULL", (service.now_iso(),)):
+        hazards.append({"type": "official warning area", "id": a["id"], "name": a["title"], "lat": a["lat"], "lon": a["lon"],
+                        "radius_m": a["radius_km"] * 1000, "basis": f"{a['source']} - {a['severity']}", "severity": a["severity"]})
     out = []
     for i, rt in enumerate(routes):
         hits = risk.route_hazards(rt["geometry"]["coordinates"], hazards, 200)
         verified = [h for h in hits if h.get("status") == "Verified"]
+        official = [h for h in hits if h["type"] == "official warning area"]
+        steps = [{"text": risk.step_text(st), "distance_m": round(st.get("distance", 0))}
+                 for leg in rt.get("legs", []) for st in leg.get("steps", [])][:120]
         out.append({"index": i, "distance_km": round(rt["distance"] / 1000, 1),
-                    "duration_min": round(rt["duration"] / 60), "geometry": rt["geometry"], "hazards": hits,
-                    "verified_flood_reports": len(verified),
+                    "duration_min": round(rt["duration"] / 60), "geometry": rt["geometry"], "hazards": hits, "steps": steps,
+                    "verified_flood_reports": len(verified), "official_warnings": len(official),
                     "warning": ("Route passes near a verified flood report." if verified else
+                                "Route is inside an official warning area." if official else
                                 "Route passes near known/reported flood locations." if hits else
                                 "No known flood locations on this route in our data - current road flooding cannot be confirmed.")})
     return {"routes": out, "disclaimer": "Travel times come from a routing service without live traffic. "

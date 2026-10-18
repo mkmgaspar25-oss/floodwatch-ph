@@ -127,6 +127,30 @@ def route_hazards(coords, hazards, radius_m):
             t = 0 if dx == dy == 0 else max(0, min(1, -(x1 * dx + y1 * dy) / (dx * dx + dy * dy)))
             d = math.hypot(x1 + t * dx, y1 + t * dy)
             best = d if best is None or d < best else best
-        if best is not None and best <= radius_m:
+        if best is not None and best <= h.get("radius_m", radius_m):
             hits.append({**h, "distance_m": round(best)})
     return hits
+
+
+def step_text(step):
+    """Readable instruction built only from fields the routing service returns (maneuver type/modifier, street name)."""
+    m = step.get("maneuver", {})
+    t, mod = m.get("type"), (m.get("modifier") or "").replace("slight ", "slightly ")
+    name, road = step.get("name") or "", step.get("name") or "the road"
+    if t == "depart":
+        return f"Head {mod or 'out'} on {road}" if name else "Start"
+    if t == "arrive":
+        return "Arrive at your destination"
+    if t in ("roundabout", "rotary", "exit roundabout", "exit rotary"):
+        return f"At the roundabout, exit onto {road}"
+    if t in ("turn", "end of road"):
+        return f"Turn {mod} onto {road}" if mod and mod != "straight" else f"Continue onto {road}"
+    if t == "fork":
+        return f"Keep {mod} at the fork onto {road}" if mod else f"Take the fork onto {road}"
+    if t == "merge":
+        return f"Merge onto {road}"
+    if t == "on ramp":
+        return f"Take the ramp onto {road}"
+    if t == "off ramp":
+        return f"Take the exit onto {road}"
+    return f"Continue on {road}"

@@ -121,7 +121,7 @@ async def get_radar():
 
 async def get_routes(o, d):
     url = f"https://router.project-osrm.org/route/v1/driving/{o[1]},{o[0]};{d[1]},{d[0]}"
-    raw, _, _ = await cached_get(url, {"alternatives": "true", "overview": "full", "geometries": "geojson"}, 300)
+    raw, _, _ = await cached_get(url, {"alternatives": "true", "overview": "full", "geometries": "geojson", "steps": "true"}, 300)
     if raw.get("code") != "Ok":
         raise ProviderError(f"Routing failed: {raw.get('code')}")
     return raw["routes"]
@@ -300,3 +300,25 @@ async def get_pagasa_ncr():
                 raise ProviderError(f"{type(e).__name__}: {e}")
             stale = True
     return {**hit[1], "fetched_at": iso(hit[0]), "stale": stale, "source_url": key, "region": "National Capital Region (Metro Manila)"}
+
+
+async def reverse(lat, lon):
+    """Name (and barangay/area when OSM has it) for a clicked map point. Nominatim policy: <=1 req/s."""
+    global _nom_last
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {"lat": round(lat, 5), "lon": round(lon, 5), "format": "jsonv2", "zoom": 18, "addressdetails": 1}
+    ck = (url, tuple(sorted((k, str(v)) for k, v in params.items())))
+    if not (ck in _cache and time.time() - _cache[ck][0] < 86400):
+        async with _nom_lock:
+            wait = 1.1 - (time.time() - _nom_last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _nom_last = time.time()
+    raw, _, _ = await cached_get(url, params, 86400)
+    a = raw.get("address") or {}
+    if raw.get("error"):
+        return {"name": None, "brgy": None}
+    area = a.get("neighbourhood") or a.get("suburb") or a.get("quarter") or a.get("city_district")
+    city = a.get("city") or a.get("town") or a.get("municipality") or a.get("county")
+    name = ", ".join(dict.fromkeys(x for x in (raw.get("name"), a.get("road") or a.get("pedestrian"), area, city) if x))
+    return {"name": name or raw.get("display_name"), "brgy": _brgy(a)}
