@@ -341,9 +341,17 @@ async def history(lat: LAT, lon: LON, days: int = Query(14, ge=3, le=60)):
 app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
 
 
+class RevalidateStatic(StaticFiles):
+    """Browsers must re-check static files on every load, so a redeploy never leaves old CSS/JS mixed with new HTML."""
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(BASE, "static", "index.html"))
+    return FileResponse(os.path.join(BASE, "static", "index.html"), headers={"Cache-Control": "no-cache"})
 
 
-app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="static")
+app.mount("/static", RevalidateStatic(directory=os.path.join(BASE, "static")), name="static")
