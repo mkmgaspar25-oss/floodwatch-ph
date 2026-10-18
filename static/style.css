@@ -39,7 +39,7 @@ h2,h3,h4{margin:.2em 0}.muted{color:var(--muted)}.fine{color:var(--muted);font-s
 .banner{display:none;margin:10px 18px 0;padding:9px 14px;border-radius:12px;background:#fff4d6;color:#5a4300;border:1px solid #f2d27b}.banner.on{display:block}
 /* ---------- layout ---------- */
 .app{display:grid;grid-template-columns:minmax(0,1fr) 450px;gap:18px;padding:18px;max-width:1600px;margin:auto;align-items:start}
-.mapcol{position:sticky;top:76px}.wide{grid-column:1/-1}
+.mapcol{position:static}.wide{grid-column:1/-1}
 .panelcol{min-width:0}.panes{margin-top:12px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--shadow);margin-bottom:12px;animation:rise .35s both}
 .card-title{display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:8px}.card-title select{width:auto;margin-left:auto}
@@ -157,3 +157,13 @@ footer{padding:18px;color:var(--muted);font-size:12px;text-align:center}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.cloud,.rain{display:none}}
 .panes{scroll-margin-top:72px}
+
+.search input[type=text]{padding:9px 52px 9px 38px}.search.wide input[type=text]{padding-right:12px}
+
+/* ---- layout fixes ---- */
+.ep{position:relative}.ep:focus-within{z-index:30}.swap-row{position:relative;z-index:2}.ep:focus-within~.swap-row{z-index:1}
+@media(min-width:1001px){
+ .panelcol{height:calc(100vh - 96px);min-height:480px;overflow-y:auto;overflow-x:hidden;padding:0 6px 24px 0;scrollbar-width:thin}
+ .tabbar{position:sticky;top:0;z-index:40}
+}
+@media(max-width:1000px){.panelcol{height:auto;overflow:visible;padding:0}}
