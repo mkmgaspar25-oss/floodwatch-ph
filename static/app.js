@@ -63,6 +63,33 @@ const S = {loc:{name:'Manila', lat:14.5995, lon:120.9842}, pick:null, areas:[], 
   route:{list:[], sel:0}, rpt:null, rptName:null, alertF:{sev:'all', st:'active'}};
 const isAdmin = () => !!sessionStorage.adm;
 
+// ---------- weather-responsive background (visual layer only; follows the weather code of the selected location) ----------
+const BG = $('.bg');
+BG.innerHTML = ['clear', 'partly', 'cloudy', 'fog', 'drizzle', 'rain', 'storm'].map(k => `<i class="sky s-${k}"></i>`).join('') + '<i class="veil"></i><i class="sun"></i>'
+  + [1, 2, 3, 4, 5].map(n => `<i class="cloud c${n}"></i>`).join('') + '<i class="fog f1"></i><i class="fog f2"></i><i class="drops d1"></i><i class="drops d2"></i><i class="bolt"></i>';
+BG.dataset.wx = 'none'; BG.dataset.heavy = '0';                      // neutral look until real weather arrives
+const wxKind = c => c === 0 || c === 1 ? 'clear' : c === 2 ? 'partly' : c === 45 || c === 48 ? 'fog' : c >= 51 && c <= 57 ? 'drizzle'
+  : (c >= 61 && c <= 67) || (c >= 80 && c <= 82) ? 'rain' : c >= 95 ? 'storm' : 'cloudy';                // WMO codes from the weather API; anything else = cloudy
+function setWeatherBg(code) {
+  if (typeof code !== 'number') return;                              // no data: keep the last valid background
+  BG.dataset.wx = wxKind(code); BG.dataset.heavy = [65, 67, 82, 95, 96, 99].includes(code) ? '1' : '0';
+}
+
+// ---------- Open-Meteo direct fallback ----------
+// The free weather API limits requests per IP address, and shared hosting IPs can hit that limit (HTTP 429). When our server is refused,
+// the visitor's browser asks Open-Meteo itself, and our server only validates/analyses that forecast for that one response (nothing stored or shared).
+const OM = 'https://api.open-meteo.com/v1/forecast';
+const OM_Q = 'timezone=Asia%2FManila&past_days=1&forecast_days=7&wind_speed_unit=kmh&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m'
+  + '&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,visibility&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max';
+const g1 = v => Math.round(v * 10) / 10, rawCache = {};
+function omRaw(points) {                                              // points: [[lat, lon], ...] → Promise of one raw forecast per point
+  const key = points.join(';'), hit = rawCache[key]; if (hit && Date.now() - hit.t < 10 * 60e3) return hit.p;
+  const p = fetch(`${OM}?latitude=${points.map(q => q[0]).join(',')}&longitude=${points.map(q => q[1]).join(',')}&${OM_Q}`)
+    .then(async r => { if (!r.ok) throw new Error(`Open-Meteo answered ${r.status}`); const j = await r.json(); return Array.isArray(j) ? j : [j]; });
+  rawCache[key] = {t:Date.now(), p}; p.catch(() => delete rawCache[key]); return p;
+}
+const post = (path, body) => api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+
 function applyTheme() {
   const t = prefs.theme === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : prefs.theme;
   document.documentElement.dataset.theme = t;
@@ -133,9 +160,19 @@ async function selectLocation(loc) {
 
 // ---------- map data ----------
 const popRow = (k, v) => v ? `<li><b>${k}:</b> ${esc(v)}</li>` : '';
+async function areasViaBrowser(rows, bad) {
+  const cell = a => `${g1(a.lat)},${g1(a.lon)}`, cells = {}; bad.forEach(a => cells[cell(a)] = null);
+  const keys = Object.keys(cells), raws = await omRaw(keys.map(k => k.split(',').map(Number))); keys.forEach((k, i) => cells[k] = raws[i]);
+  const res = await post('/api/offload/areas', {cells, items:bad.map(a => ({id:a.id, cell:cell(a)}))}), by = Object.fromEntries(res.map(x => [x.id, x.risk]));
+  return rows.map(a => by[a.id] ? {...a, risk:by[a.id]} : a);
+}
 async function loadAreas() {
   try {
-    const rows = await api('/api/flood-areas?with_risk=true'); G.areas.clearLayers(); S.areas = rows; S.areaById = Object.fromEntries(rows.map(a => [a.id, a]));
+    let rows = await api('/api/flood-areas?with_risk=true'); G.areas.clearLayers();
+    const bad = rows.filter(a => a.risk.level === 'Insufficient data');
+    // server was refused by the weather API for some areas: fill them in using the visitor's own connection
+    if (bad.length) rows = await areasViaBrowser(rows, bad).catch(() => rows);
+    S.areas = rows; S.areaById = Object.fromEntries(rows.map(a => [a.id, a]));
     rows.forEach(a => {
       const k = lvKey(a.risk.level), hot = k === 'high' || k === 'severe';
       const m = L.marker([a.lat, a.lon], {icon:pinIcon(COL[k], icon('droplet'), hot ? 'sev' : ''), title:a.name});
@@ -173,25 +210,44 @@ function drawWarnings() {
 
 // ---------- weather / risk / history ----------
 async function loadWeather() {
-  const {lat, lon} = S.loc; S.wErr = null;
-  try { S.w = await api(`/api/weather?lat=${lat}&lon=${lon}`); }
-  catch (e) { S.wErr = e.message; S.w = null; }
+  const loc = S.loc, {lat, lon} = loc; S.wErr = null; let w = null, direct = false;
+  try { w = await api(`/api/weather?lat=${lat}&lon=${lon}`); }
+  catch (e1) {
+    try { w = await post('/api/offload/weather', {raw:(await omRaw([[g1(lat), g1(lon)]]))[0]}); direct = true; }
+    catch (e2) { if (loc !== S.loc) return; S.wErr = e1.message; S.w = null; }
+  }
+  if (loc !== S.loc) return;                                          // a newer location was selected while this request was in flight: ignore it
+  if (w) S.w = w;
   if (S.w) {
+    const note = S.w.stale ? 'Provider unreachable — showing cached data fetched ' + fmt(S.w.fetched_at) : direct ? 'Our server is being rate-limited by the weather provider, so your browser loaded this forecast directly.' : '';
     $('#updated').textContent = `Model time ${fmt(S.w.model_time)} · fetched ${fmt(S.w.fetched_at)}`;
-    $('#stale').classList.toggle('on', !!S.w.stale); $('#stale').textContent = S.w.stale ? 'Provider unreachable — showing cached data fetched ' + fmt(S.w.fetched_at) : '';
+    $('#stale').classList.toggle('on', !!note); $('#stale').textContent = note;
     $('#rainwin').textContent = S.w.rain_window.note;
+    setWeatherBg(S.w.current.code);
   }
   renderRisk(); drawForecastCharts();
 }
 async function loadRisk() {
-  const {lat, lon} = S.loc; S.riskErr = null;
-  try { S.risk = await api(`/api/risk?lat=${lat}&lon=${lon}`); } catch (e) { S.riskErr = e.message; S.risk = null; }
-  renderRisk();
+  const loc = S.loc, {lat, lon} = loc; S.riskErr = null; let r = null, r0 = null, err = null;
+  try { r0 = await api(`/api/risk?lat=${lat}&lon=${lon}`); r = r0.level === 'Insufficient data' ? null : r0; } catch (e) { err = e; }
+  if (!r) {
+    try { r = await post('/api/offload/risk', {lat, lon, raw:(await omRaw([[g1(lat), g1(lon)]]))[0]}); }
+    catch { r = r0; if (!r) S.riskErr = err ? err.message : 'Risk estimate unavailable'; }
+  }
+  if (loc !== S.loc) return;
+  S.risk = r; renderRisk();
 }
 async function loadHistory() {
-  const {lat, lon} = S.loc;
-  try { S.hist = await api(`/api/history?lat=${lat}&lon=${lon}&days=${$('#days').value}`); drawHistCharts(); }
-  catch (e) { $('#histNote').textContent = 'Historical data unavailable: ' + e.message; }
+  const loc = S.loc, {lat, lon} = loc, days = $('#days').value; let h = null;
+  try { h = await api(`/api/history?lat=${lat}&lon=${lon}&days=${days}`); }
+  catch (e) {
+    try {
+      const r = await fetch(`${OM}?latitude=${g1(lat)}&longitude=${g1(lon)}&timezone=Asia%2FManila&past_days=${days}&forecast_days=1&daily=precipitation_sum`); if (!r.ok) throw new Error(r.status);
+      const j = await r.json(); h = {rain:{time:j.daily.time, precip_sum:j.daily.precipitation_sum, source:'Open-Meteo model estimate (loaded directly by your browser)'}, alerts_by_day:[], reports_by_day:[], gauge_data:'Unavailable: no official water-level gauge feed is configured.'};
+    } catch { if (loc === S.loc) $('#histNote').textContent = 'Historical data unavailable: ' + e.message; return; }
+  }
+  if (loc !== S.loc) return;
+  S.hist = h; drawHistCharts();
 }
 function draw(id, cfg) {
   S.charts[id]?.destroy();

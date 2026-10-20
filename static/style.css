@@ -12,15 +12,51 @@ button,input,select,textarea{font:inherit;color:inherit}
 .ic{width:1.15em;height:1.15em;flex:none;vertical-align:-.2em}
 [data-i]{display:inline-flex}
 h2,h3,h4{margin:.2em 0}.muted{color:var(--muted)}.fine{color:var(--muted);font-size:12.5px;margin:6px 0}
-/* ---------- atmosphere ---------- */
-.bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
-.cloud{position:absolute;border-radius:50%;filter:blur(46px);opacity:.55;background:radial-gradient(circle,rgba(255,255,255,.95),rgba(255,255,255,0) 70%)}
+/* ---------- weather-responsive atmosphere (background only; sits behind the UI and never intercepts input) ---------- */
+.bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;--sun:0;--cloud:.55;--cc:255,255,255;--rain:0;--fog:0;--fc:255,255,255;--drop:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='200'%3E%3Cg%20stroke='%2349657d'%20stroke-width='1.3'%20stroke-linecap='round'%20opacity='.5'%3E%3Cline%20x1='14'%20y1='12'%20x2='9'%20y2='38'/%3E%3Cline%20x1='52'%20y1='88'%20x2='47'%20y2='114'/%3E%3Cline%20x1='97'%20y1='30'%20x2='92'%20y2='56'/%3E%3Cline%20x1='143'%20y1='120'%20x2='138'%20y2='146'/%3E%3Cline%20x1='178'%20y1='52'%20x2='173'%20y2='78'/%3E%3Cline%20x1='30'%20y1='150'%20x2='25'%20y2='176'/%3E%3Cline%20x1='76'%20y1='176'%20x2='71'%20y2='202'/%3E%3Cline%20x1='120'%20y1='76'%20x2='115'%20y2='102'/%3E%3Cline%20x1='160'%20y1='172'%20x2='155'%20y2='198'/%3E%3Cline%20x1='188'%20y1='110'%20x2='183'%20y2='136'/%3E%3Cline%20x1='8'%20y1='98'%20x2='3'%20y2='124'/%3E%3Cline%20x1='66'%20y1='40'%20x2='61'%20y2='66'/%3E%3C/g%3E%3C/svg%3E")}
+[data-theme=dark] .bg{--cloud:.12;--cc:120,200,230;--fc:150,170,188;--drop:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='200'%3E%3Cg%20stroke='%23cfeaff'%20stroke-width='1.3'%20stroke-linecap='round'%20opacity='.62'%3E%3Cline%20x1='14'%20y1='12'%20x2='9'%20y2='38'/%3E%3Cline%20x1='52'%20y1='88'%20x2='47'%20y2='114'/%3E%3Cline%20x1='97'%20y1='30'%20x2='92'%20y2='56'/%3E%3Cline%20x1='143'%20y1='120'%20x2='138'%20y2='146'/%3E%3Cline%20x1='178'%20y1='52'%20x2='173'%20y2='78'/%3E%3Cline%20x1='30'%20y1='150'%20x2='25'%20y2='176'/%3E%3Cline%20x1='76'%20y1='176'%20x2='71'%20y2='202'/%3E%3Cline%20x1='120'%20y1='76'%20x2='115'%20y2='102'/%3E%3Cline%20x1='160'%20y1='172'%20x2='155'%20y2='198'/%3E%3Cline%20x1='188'%20y1='110'%20x2='183'%20y2='136'/%3E%3Cline%20x1='8'%20y1='98'%20x2='3'%20y2='124'/%3E%3Cline%20x1='66'%20y1='40'%20x2='61'%20y2='66'/%3E%3C/g%3E%3C/svg%3E")}
+.bg i{position:absolute;display:block}
+/* sky gradients: light theme stays light and dark theme stays dark, so text outside the cards keeps its contrast */
+.sky{inset:0;opacity:0;background:linear-gradient(180deg,var(--a),var(--b) 58%,var(--c));transition:opacity 1.6s ease}
+.s-clear{--a:#a6dbf8;--b:#cdeefb;--c:#eef8fd}.s-partly{--a:#b3d9ef;--b:#d4e8f3;--c:#eef5f9}.s-cloudy{--a:#b2c0cd;--b:#cfd9e2;--c:#e8eef3}.s-fog{--a:#c4cdd5;--b:#dbe1e6;--c:#eef1f3}
+.s-drizzle{--a:#aebfcd;--b:#cbd8e2;--c:#e3ebf1}.s-rain{--a:#9fb2c3;--b:#c0cfdb;--c:#dde6ed}.s-storm{--a:#8796a8;--b:#adbbc8;--c:#ced8e1}
+[data-theme=dark] .s-clear{--a:#0f4a73;--b:#0c3858;--c:#0a283d}[data-theme=dark] .s-partly{--a:#0e3f60;--b:#0b2f48;--c:#09212f}[data-theme=dark] .s-cloudy{--a:#22394d;--b:#192c3c;--c:#101f2c}
+[data-theme=dark] .s-fog{--a:#2f424f;--b:#223340;--c:#172430}[data-theme=dark] .s-drizzle{--a:#193449;--b:#122739;--c:#0c1b29}[data-theme=dark] .s-rain{--a:#122a3d;--b:#0c1e2e;--c:#08141f}
+[data-theme=dark] .s-storm{--a:#0e1726;--b:#0a111c;--c:#060a12}
+.bg[data-wx=clear] .s-clear,.bg[data-wx=partly] .s-partly,.bg[data-wx=cloudy] .s-cloudy,.bg[data-wx=fog] .s-fog,.bg[data-wx=drizzle] .s-drizzle,.bg[data-wx=rain] .s-rain,.bg[data-wx=storm] .s-storm{opacity:1}
+.veil{inset:0;opacity:0;background:rgba(255,255,255,.36);transition:opacity 1.6s ease}[data-theme=dark] .veil{background:rgba(5,16,26,.2)}.bg:not([data-wx=none]) .veil{opacity:1}
+/* per-condition intensity (custom properties: sun, cloud opacity/colour, rain, fog) */
+.bg[data-wx=clear]{--sun:1;--cloud:.3}.bg[data-wx=partly]{--sun:.75;--cloud:.75}.bg[data-wx=cloudy]{--cloud:.95;--cc:228,235,242}.bg[data-wx=fog]{--cloud:.5;--fog:.9;--cc:236,240,244}
+.bg[data-wx=drizzle]{--cloud:.9;--rain:.45;--fog:.25;--cc:214,223,232}.bg[data-wx=rain]{--cloud:1;--rain:.8;--fog:.2;--cc:196,207,218}.bg[data-wx=storm]{--cloud:1;--rain:1;--cc:118,129,144}
+[data-theme=dark] .bg[data-wx=clear]{--sun:.85;--cloud:.1;--cc:140,200,235}[data-theme=dark] .bg[data-wx=partly]{--sun:.6;--cloud:.22;--cc:150,190,220}
+[data-theme=dark] .bg[data-wx=cloudy]{--cloud:.4;--cc:120,150,175}[data-theme=dark] .bg[data-wx=fog]{--cloud:.25;--cc:150,170,188}[data-theme=dark] .bg[data-wx=drizzle]{--cloud:.4;--cc:100,130,155}
+[data-theme=dark] .bg[data-wx=rain]{--cloud:.45;--cc:85,110,135}[data-theme=dark] .bg[data-wx=storm]{--cloud:.55;--cc:50,62,80}
+/* sun: soft glow with slowly rotating rays */
+.sun{top:-130px;right:4%;width:440px;height:440px;border-radius:50%;opacity:var(--sun);visibility:hidden;transition:opacity 1.6s ease,visibility 0s 1.6s;animation:sunpulse 9s ease-in-out infinite;
+ background:radial-gradient(circle,rgba(255,247,200,.95) 0,rgba(255,224,130,.7) 20%,rgba(255,205,100,.25) 46%,rgba(255,200,90,0) 70%)}
+.sun::before{content:"";position:absolute;inset:-35%;border-radius:50%;background:repeating-conic-gradient(rgba(255,236,160,.16) 0 5deg,transparent 5deg 15deg);-webkit-mask-image:radial-gradient(circle,#000 18%,transparent 66%);mask-image:radial-gradient(circle,#000 18%,transparent 66%);animation:spin 120s linear infinite}
+.bg[data-wx=clear] .sun,.bg[data-wx=partly] .sun{visibility:visible;transition:opacity 1.6s ease,visibility 0s}
+/* clouds drift slowly; colour and opacity change smoothly with the weather */
+.cloud{border-radius:50%;filter:blur(42px);opacity:var(--cloud);background-color:rgb(var(--cc));-webkit-mask-image:radial-gradient(circle,#000 0,transparent 70%);mask-image:radial-gradient(circle,#000 0,transparent 70%);transition:opacity 1.6s ease,background-color 1.6s ease}
 .c1{width:520px;height:220px;top:6%;left:-10%;animation:drift 70s linear infinite}.c2{width:640px;height:260px;top:42%;left:30%;animation:drift 95s linear infinite reverse}.c3{width:460px;height:200px;top:72%;left:-5%;animation:drift 80s linear infinite}
-[data-theme=dark] .cloud{opacity:.12;background:radial-gradient(circle,rgba(120,200,230,.9),rgba(120,200,230,0) 70%)}
-.rain{position:absolute;inset:-20% 0 0 0;display:none;background:repeating-linear-gradient(105deg,transparent 0 16px,rgba(150,210,235,.10) 16px 17px);animation:rain 1.4s linear infinite}
-[data-theme=dark] .rain{display:block;opacity:.5}
-@keyframes drift{from{transform:translateX(-10vw)}to{transform:translateX(60vw)}}@keyframes rain{to{background-position:-40px 160px}}
-.nomotion .cloud,.nomotion .rain{animation:none}.nomotion *{transition:none!important}
+.c4{width:560px;height:230px;top:22%;left:45%;animation:drift 110s linear infinite}.c5{width:420px;height:180px;top:56%;left:-20%;animation:drift 85s linear infinite reverse}
+.fog{left:-20%;right:-20%;height:38%;opacity:var(--fog);filter:blur(24px);visibility:hidden;background:linear-gradient(180deg,rgba(var(--fc),0),rgba(var(--fc),.6) 50%,rgba(var(--fc),0));transition:opacity 1.6s ease,visibility 0s 1.6s;animation:fogdrift 42s ease-in-out infinite alternate}
+.f1{top:22%}.f2{top:52%;animation-duration:58s;animation-direction:alternate-reverse}
+.bg[data-wx=fog] .fog,.bg[data-wx=drizzle] .fog,.bg[data-wx=rain] .fog{visibility:visible;transition:opacity 1.6s ease,visibility 0s}
+/* rain: two tiled layers falling at different speeds (GPU transform animation, seamless loop) */
+.drops{opacity:var(--rain);visibility:hidden;background-image:var(--drop);transition:opacity 1.6s ease,visibility 0s 1.6s}
+.d1{inset:-200px;background-size:200px 200px;animation:fall .7s linear infinite}.d2{inset:-340px;background-size:340px 340px;opacity:calc(var(--rain) * .7);animation:fall2 1.05s linear infinite}
+.bg[data-wx=drizzle] .drops,.bg[data-wx=rain] .drops,.bg[data-wx=storm] .drops{visibility:visible;transition:opacity 1.6s ease,visibility 0s}
+.bg[data-heavy="1"] .d1{animation-duration:.5s}.bg[data-heavy="1"] .d2{animation-duration:.75s}
+/* thunderstorm: occasional soft flash (two quick flickers every 9 s, well under the 3-flashes-per-second guideline) */
+.bolt{inset:0;opacity:0;visibility:hidden;background:radial-gradient(ellipse at 35% -10%,rgba(255,255,255,.95),rgba(220,230,255,.35) 38%,rgba(255,255,255,0) 70%)}
+.bg[data-wx=storm] .bolt{visibility:visible;animation:flash 9s linear infinite}
+@keyframes drift{from{transform:translateX(-10vw)}to{transform:translateX(60vw)}}@keyframes fogdrift{from{transform:translateX(-5%)}to{transform:translateX(5%)}}
+@keyframes sunpulse{50%{transform:scale(1.05)}}@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fall{to{transform:translate3d(0,200px,0)}}@keyframes fall2{to{transform:translate3d(0,340px,0)}}
+@keyframes flash{0%,91%,100%{opacity:0}92%{opacity:.26}93%{opacity:.05}94.5%{opacity:.34}96.5%{opacity:0}}
+.nomotion .bg *{animation:none!important}.nomotion .drops,.nomotion .bolt{display:none}.nomotion *{transition:none!important}
+@media(max-width:700px){.d2,.c4,.c5{display:none}.sun{width:320px;height:320px;top:-100px}}
 /* ---------- header ---------- */
 .top{position:sticky;top:0;z-index:1500;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 18px;background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:8px;font-size:18px;white-space:nowrap}.logo-mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,var(--teal),var(--aqua));color:#fff;align-items:center;justify-content:center}
@@ -155,7 +191,7 @@ footer{padding:18px;color:var(--muted);font-size:12px;text-align:center}
  .panes{margin-top:0}.upd{display:none}.locchip{max-width:150px}.stats{grid-template-columns:repeat(2,1fr)}.legend{max-width:170px}.btn,.icon-btn,.chip{min-height:40px}
  #toasts{bottom:92px}
 }
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.cloud,.rain{display:none}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.drops,.bolt{display:none}}
 .panes{scroll-margin-top:72px}
 
 .search input[type=text]{padding:9px 52px 9px 38px}.search.wide input[type=text]{padding-right:12px}
