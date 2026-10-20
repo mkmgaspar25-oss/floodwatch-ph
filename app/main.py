@@ -66,6 +66,8 @@ LON = Annotated[float, Query(ge=115, le=128)]
 async def forecast_or_502(lat, lon):
     try:
         return await providers.get_forecast(lat, lon)
+    except providers.RateLimited as e:
+        raise HTTPException(503, f"The free weather service is limiting requests from this server right now ({e}).")
     except providers.ProviderError as e:
         raise HTTPException(502, f"Weather provider unavailable and no cached data exists ({e})")
 
@@ -112,6 +114,61 @@ def monitored():
 async def weather(lat: LAT, lon: LON):
     fc = await forecast_or_502(lat, lon)
     return {**fc, "rain_window": risk.rain_window(fc)}
+
+
+class OffloadWeather(BaseModel):
+    raw: dict
+
+
+class OffloadRisk(BaseModel):
+    lat: float = Field(ge=4, le=22)
+    lon: float = Field(ge=115, le=128)
+    raw: dict
+    area_id: Optional[int] = None
+
+
+class OffloadAreas(BaseModel):
+    cells: dict[str, dict] = Field(max_length=30)
+    items: list[dict] = Field(max_length=60)          # [{"id": area id, "cell": key into cells}]
+
+
+def _fc_from_body(raw):
+    try:
+        return providers.from_raw(raw)
+    except providers.ProviderError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/offload/weather")
+def offload_weather(body: OffloadWeather, request: Request):
+    """Fallback used by the browser when this server is rate-limited by the weather provider: the browser sends
+    the forecast it fetched itself; we normalise it for that visitor only (nothing is stored or shared)."""
+    rate_limit("off:" + client_hash(request), 90, 60)
+    fc = _fc_from_body(body.raw)
+    return {**fc, "rain_window": risk.rain_window(fc)}
+
+
+@app.post("/api/offload/risk")
+def offload_risk(body: OffloadRisk, request: Request):
+    rate_limit("off:" + client_hash(request), 90, 60)
+    fc = _fc_from_body(body.raw)
+    susceptible = body.area_id is not None and bool(db.q("SELECT 1 FROM flood_prone_areas WHERE id=?", (body.area_id,)))
+    return service.risk_from_fc(fc, body.lat, body.lon, susceptible)
+
+
+@app.post("/api/offload/areas")
+def offload_areas(body: OffloadAreas, request: Request):
+    rate_limit("off:" + client_hash(request), 30, 60)
+    fcs, out = {}, []
+    for it in body.items:
+        a = db.q("SELECT id,lat,lon FROM flood_prone_areas WHERE id=?", (it.get("id"),))
+        raw = body.cells.get(it.get("cell"))
+        if not a or raw is None:
+            continue
+        if it["cell"] not in fcs:
+            fcs[it["cell"]] = _fc_from_body(raw)
+        out.append({"id": a[0]["id"], "risk": service.risk_from_fc(fcs[it["cell"]], a[0]["lat"], a[0]["lon"], True)})
+    return out
 
 
 @app.get("/api/radar")

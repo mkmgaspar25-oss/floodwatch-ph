@@ -32,3 +32,8 @@ async def risk_for(lat, lon, susceptible=False, with_discharge=False, fc_digits=
         except providers.ProviderError:
             pass
     return risk.assess(fc, susceptible, nearby_reports(lat, lon), active_officials(lat, lon), discharge)
+
+
+def risk_from_fc(fc, lat, lon, susceptible=False):
+    """Risk estimate from an already-validated forecast (used by the browser-fallback endpoints)."""
+    return risk.assess(fc, susceptible, nearby_reports(lat, lon), active_officials(lat, lon), None)

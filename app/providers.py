@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from urllib.parse import urlparse
 
 PH = timezone(timedelta(hours=8))
 _cache, _locks = {}, {}
@@ -17,6 +18,21 @@ class ProviderError(Exception):
     pass
 
 
+_cooldown = {}                     # host -> unix time until which we stop calling it (after a 429)
+_gate = asyncio.Semaphore(2)       # at most two provider calls in flight: avoids per-minute bursts
+
+
+class RateLimited(ProviderError):
+    pass
+
+
+def _reason(resp):
+    try:
+        return str(resp.json().get("reason", ""))[:160]
+    except Exception:
+        return ""
+
+
 async def cached_get(url, params, ttl):
     key = (url, tuple(sorted((k, str(v)) for k, v in params.items())))
     lock = _locks.setdefault(key, asyncio.Lock())
@@ -24,19 +40,34 @@ async def cached_get(url, params, ttl):
         hit, now = _cache.get(key), time.time()
         if hit and now - hit[0] < ttl:
             return hit[1], hit[0], False
-        for attempt in range(2):                      # one quick retry smooths over rate-limit blips
+        host = urlparse(url).netloc
+        if _cooldown.get(host, 0) > now:  # provider told us to back off: don't hammer it
+            if hit:
+                return hit[1], hit[0], True
+            raise RateLimited(f"{host} is rate-limiting this server; paused for another {int(_cooldown[host] - now)} s")
+        for attempt in range(2):          # one quick retry for network blips / 5xx (never for 429)
             try:
-                async with httpx.AsyncClient(timeout=12, headers={"User-Agent": "FloodWatchPH/1.0"}) as c:
-                    r = await c.get(url, params=params)
-                    r.raise_for_status()
-                    data = r.json()
+                async with _gate:
+                    async with httpx.AsyncClient(timeout=12, headers={"User-Agent": "FloodWatchPH/1.0"}) as c:
+                        r = await c.get(url, params=params)
+                if r.status_code == 429:
+                    reason = _reason(r)
+                    low = reason.lower()
+                    _cooldown[host] = time.time() + (1800 if ("day" in low or "tomorrow" in low) else 900 if "hour" in low else 90)
+                    if hit:
+                        return hit[1], hit[0], True
+                    raise RateLimited(f"{host} answered 429 Too Many Requests" + (f": {reason}" if reason else ""))
+                r.raise_for_status()
+                data = r.json()
                 _cache[key] = (now, data)
                 return data, now, False
+            except RateLimited:
+                raise
             except Exception as e:
                 if attempt == 0:
                     await asyncio.sleep(0.8)
                     continue
-                if hit:                               # serve stale, flagged
+                if hit:                   # serve stale, flagged
                     return hit[1], hit[0], True
                 raise ProviderError(f"{type(e).__name__}: {e}")
 
@@ -46,9 +77,9 @@ def iso(ts):
 
 
 async def get_forecast(lat, lon):
-    ttl = int(os.getenv("FORECAST_TTL_SEC", "600"))
+    ttl = int(os.getenv("FORECAST_TTL_SEC", "1800"))
     raw, ts, stale = await cached_get("https://api.open-meteo.com/v1/forecast", {
-        "latitude": round(lat, 2), "longitude": round(lon, 2), "timezone": "Asia/Manila",
+        "latitude": round(lat, 1), "longitude": round(lon, 1), "timezone": "Asia/Manila",      # ~11 km grid = model resolution; more cache hits
         "past_days": 1, "forecast_days": 7, "wind_speed_unit": "kmh",
         "current": "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,"
                    "wind_speed_10m,wind_direction_10m",
@@ -81,6 +112,25 @@ def normalize(raw, ts, stale):
                         "visibility": now_h["visibility"]},
             "hourly": hourly, "daily": daily,
             "notes": "Hours marked forecast=false are model analysis, not rain-gauge observations."}
+
+
+def from_raw(raw):
+    """Normalise a forecast that the visitor's BROWSER fetched from Open-Meteo itself (used only when our server's
+    shared IP is rate-limited). It is validated, used for that one response, and never cached or shared."""
+    try:
+        h, d, cur = raw["hourly"], raw["daily"], raw["current"]
+        n = len(h["time"])
+        if not 24 <= n <= 400 or any(len(h[k]) != n for k in ("temperature_2m", "precipitation_probability", "precipitation", "weather_code", "wind_speed_10m", "visibility")):
+            raise ValueError("hourly arrays")
+        m = len(d["time"])
+        if not 1 <= m <= 20 or any(len(d[k]) != m for k in ("weather_code", "temperature_2m_max", "temperature_2m_min", "precipitation_sum", "precipitation_probability_max", "wind_speed_10m_max")):
+            raise ValueError("daily arrays")
+        fc = normalize(raw, time.time(), False)
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as e:
+        raise ProviderError(f"Unrecognised forecast data ({type(e).__name__})")
+    fc["source"] = "Open-Meteo (loaded directly by your browser; model-based, not a gauge or station observation)"
+    fc["offloaded"] = True
+    return fc
 
 
 async def get_discharge(lat, lon):
