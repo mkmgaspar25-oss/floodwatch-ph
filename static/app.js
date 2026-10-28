@@ -150,7 +150,30 @@ map.on('click', e => {
 });
 
 // ---------- location ----------
-function pickLoc(lat, lon, name) { selectLocation({name:name || `Pinned ${lat.toFixed(3)}, ${lon.toFixed(3)}`, lat, lon}); }
+function pickLoc(lat, lon, name) {
+  const fallback = name || `Pinned ${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+
+  // Show the selected location immediately.
+  selectLocation({ name: fallback, lat, lon });
+
+  // Keep intentional labels such as "My location".
+  if (name) return;
+
+  // Look up the actual place name using the existing backend endpoint.
+  api(`/api/reverse?lat=${lat}&lon=${lon}`)
+    .then(r => {
+      // Ignore the response if the user has selected another location.
+      if (S.loc.lat !== lat || S.loc.lon !== lon) return;
+
+      if (r.name) {
+        S.loc = { ...S.loc, name: r.name };
+        $('#locName').textContent = r.name;
+      }
+    })
+    .catch(() => {
+      // Keep the coordinate-based fallback if lookup fails.
+    });
+}
 async function selectLocation(loc) {
   S.loc = loc; $('#locName').textContent = loc.name; map.flyTo([loc.lat, loc.lon], Math.max(map.getZoom(), 12));
   G.sel.clearLayers(); L.marker([loc.lat, loc.lon], {icon:L.divIcon({className:'', html:'<div class="selring"></div>', iconSize:[22, 22], iconAnchor:[11, 11]}), interactive:false}).addTo(G.sel);
@@ -402,8 +425,14 @@ placeSearch('#search', '#results', (ll, n) => { $('#search').value = ''; selectL
 const EP = {o:{ll:null, name:'', br:null, mk:null, i:'#oIn', m:'#oBr', s:'#oState'}, d:{ll:null, name:'', br:null, mk:null, i:'#dIn', m:'#dBr', s:'#dState'}};
 const epIcon = k => L.divIcon({className:'', html:`<div class="pin ${k === 'o' ? 'ep-a' : 'ep-b'}"><span>${k === 'o' ? 'A' : 'B'}</span></div>`, iconSize:[30, 30], iconAnchor:[15, 36], popupAnchor:[0, -34]});
 function renderEp(k) {
-  const e = EP[k]; $(e.s).textContent = e.ll ? 'Set ✓' : 'Not set'; $(e.s).classList.toggle('ok', !!e.ll);
-  $(e.m).innerHTML = e.ll ? `${icon('pin')} ${esc(coordLabel(e.ll))}${e.br ? ' · 📍 ' + esc(e.br) : ''}` : '';
+  const e = EP[k];
+
+  $(e.s).textContent = e.ll ? 'Set ✓' : 'Not set';
+  $(e.s).classList.toggle('ok', !!e.ll);
+
+  $(e.m).innerHTML = e.ll
+    ? `${icon('pin')} ${esc(e.name || coordLabel(e.ll))}${e.br ? ' · 📍 ' + esc(e.br) : ''}`
+    : '';
 }
 function placeEp(k) {
   const e = EP[k]; if (e.mk) { G.ep.removeLayer(e.mk); e.mk = null; }
@@ -483,10 +512,44 @@ $('#goRoute').onclick = async () => {
 
 // ---------- Reports ----------
 function setReportPoint(ll) {
-  S.rpt = ll; S.rptName = null; G.rep.clearLayers(); L.marker(ll, {icon:pinIcon('#ef4444', '!', '', false), interactive:false}).addTo(G.rep);
-  $('#rTxt').innerHTML = `${icon('pin')} ${esc(coordLabel(ll))} · looking up place name…`;
-  api(`/api/reverse?lat=${ll[0]}&lon=${ll[1]}`).then(r => { if (S.rpt !== ll) return; S.rptName = r.name; $('#rTxt').innerHTML = `${icon('pin')} <b>${esc(r.name || 'Selected point')}</b><br>${esc(coordLabel(ll))}${r.brgy ? ' · 📍 ' + esc(r.brgy) : ''}`; })
-    .catch(() => { if (S.rpt === ll) $('#rTxt').innerHTML = `${icon('pin')} ${esc(coordLabel(ll))}`; });
+  S.rpt = ll;
+  S.rptName = null;
+
+  G.rep.clearLayers();
+
+  L.marker(ll, {
+    icon: pinIcon('#ef4444', '!', '', false),
+    interactive: false
+  }).addTo(G.rep);
+
+  $('#rTxt').innerHTML =
+    `${icon('pin')} Looking up place name…`;
+
+  api(`/api/reverse?lat=${ll[0]}&lon=${ll[1]}`)
+    .then(r => {
+      // Ignore outdated results if another point was selected.
+      if (S.rpt !== ll) return;
+
+      S.rptName = r.name || null;
+
+      if (r.name) {
+        $('#rTxt').innerHTML =
+          `${icon('pin')} <b>${esc(r.name)}</b>` +
+          (r.brgy
+            ? `<br><small>📍 ${esc(r.brgy)}</small>`
+            : '');
+      } else {
+        $('#rTxt').innerHTML =
+          `${icon('pin')} ${esc(coordLabel(ll))}`;
+      }
+    })
+    .catch(() => {
+      // Coordinates are shown only if place-name lookup fails.
+      if (S.rpt !== ll) return;
+
+      $('#rTxt').innerHTML =
+        `${icon('pin')} ${esc(coordLabel(ll))}`;
+    });
 }
 $('#pickR').onclick = () => setPick('r');
 $('#useR').onclick = () => setReportPoint([S.loc.lat, S.loc.lon]);
