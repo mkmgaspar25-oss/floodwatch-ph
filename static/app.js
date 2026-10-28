@@ -168,6 +168,7 @@ function pickLoc(lat, lon, name) {
       if (r.name) {
         S.loc = { ...S.loc, name: r.name };
         $('#locName').textContent = r.name;
+$('#locName').title = r.name;
       }
     })
     .catch(() => {
@@ -175,7 +176,9 @@ function pickLoc(lat, lon, name) {
     });
 }
 async function selectLocation(loc) {
-  S.loc = loc; $('#locName').textContent = loc.name; map.flyTo([loc.lat, loc.lon], Math.max(map.getZoom(), 12));
+  S.loc = loc;
+$('#locName').textContent = loc.name;
+$('#locName').title = loc.name; map.flyTo([loc.lat, loc.lon], Math.max(map.getZoom(), 12));
   G.sel.clearLayers(); L.marker([loc.lat, loc.lon], {icon:L.divIcon({className:'', html:'<div class="selring"></div>', iconSize:[22, 22], iconAnchor:[11, 11]}), interactive:false}).addTo(G.sel);
   S.w = S.risk = null; S.wErr = S.riskErr = null; renderRisk();
   await Promise.allSettled([loadWeather(), loadRisk(), loadHistory()]);
@@ -430,8 +433,12 @@ function renderEp(k) {
   $(e.s).textContent = e.ll ? 'Set ✓' : 'Not set';
   $(e.s).classList.toggle('ok', !!e.ll);
 
+  const fullName = e.name || (e.ll ? coordLabel(e.ll) : '');
+  const brgyText = e.br ? ` · 📍 ${e.br}` : '';
+  const fullText = `${fullName}${brgyText}`;
+
   $(e.m).innerHTML = e.ll
-    ? `${icon('pin')} ${esc(e.name || coordLabel(e.ll))}${e.br ? ' · 📍 ' + esc(e.br) : ''}`
+    ? `<span title="${esc(fullText)}">${icon('pin')} ${esc(fullName)}${esc(brgyText)}</span>`
     : '';
 }
 function placeEp(k) {
@@ -531,6 +538,7 @@ function setReportPoint(ll) {
       if (S.rpt !== ll) return;
 
       S.rptName = r.name || null;
+      $('#rTxt').title = r.name || coordLabel(ll);
 
       if (r.name) {
         $('#rTxt').innerHTML =
@@ -547,6 +555,7 @@ function setReportPoint(ll) {
       // Coordinates are shown only if place-name lookup fails.
       if (S.rpt !== ll) return;
 
+      $('#rTxt').title = coordLabel(ll);
       $('#rTxt').innerHTML =
         `${icon('pin')} ${esc(coordLabel(ll))}`;
     });
