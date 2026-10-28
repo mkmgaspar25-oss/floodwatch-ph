@@ -168,7 +168,7 @@ function pickLoc(lat, lon, name) {
       if (r.name) {
         S.loc = { ...S.loc, name: r.name };
         $('#locName').textContent = r.name;
-$('#locName').title = r.name;
+        $('#locName').title = r.name;
       }
     })
     .catch(() => {
@@ -455,12 +455,42 @@ function setEndpoint(k, ll, label, br = null, reverse = false, frame = true) {
   if (reverse) reverseLabel(k, ll);
 }
 async function reverseLabel(k, ll) {
-  const e = EP[k]; $(e.m).innerHTML = `${icon('pin')} ${esc(coordLabel(ll))} · looking up place name…`;
+  const e = EP[k];
+  const fullCoords = coordLabel(ll);
+
+  $(e.m).innerHTML =
+    `<span title="${esc(fullCoords)}">${icon('pin')} Looking up place name…</span>`;
+
   try {
-    const r = await api(`/api/reverse?lat=${ll[0]}&lon=${ll[1]}`); if (e.ll !== ll) return;      // user already chose something else
-    if (r.name) { e.name = r.name; $(e.i).value = r.name; }
-    e.br = r.brgy ? (/barangay|brgy/i.test(r.brgy) ? r.brgy : `Brgy/area from map data: ${r.brgy}`) : null; renderEp(k);
-  } catch { if (e.ll === ll) renderEp(k); }
+    const r = await api(`/api/reverse?lat=${ll[0]}&lon=${ll[1]}`);
+
+    // Ignore outdated results if the endpoint has changed.
+    if (e.ll !== ll) return;
+
+    if (r.name) {
+      e.name = r.name;
+      $(e.i).value = r.name;
+    } else {
+      e.name = fullCoords;
+      $(e.i).value = fullCoords;
+    }
+
+    e.br = r.brgy
+      ? (/barangay|brgy/i.test(r.brgy)
+          ? r.brgy
+          : `Brgy/area from map data: ${r.brgy}`)
+      : null;
+
+    renderEp(k);
+  } catch (err) {
+    if (e.ll !== ll) return;
+
+    // Keep coordinates as a fallback, with the full coordinates on hover.
+    e.name = fullCoords;
+    $(e.i).value = fullCoords;
+    renderEp(k);
+    console.error('Reverse geocoding failed:', err);
+  }
 }
 ['o', 'd'].forEach(k => $(EP[k].i).addEventListener('input', () => {                      // typing invalidates the confirmed point
   const e = EP[k]; if (!e.ll || $(e.i).value === e.name) return; e.ll = null; e.br = null; placeEp(k); renderEp(k); clearRoute(); }));
@@ -521,6 +551,7 @@ $('#goRoute').onclick = async () => {
 function setReportPoint(ll) {
   S.rpt = ll;
   S.rptName = null;
+  $('#rTxt').title = coordLabel(ll);
 
   G.rep.clearLayers();
 
